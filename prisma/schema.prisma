@@ -203,6 +203,8 @@ model AdminAuditLog {
   id          Int       @id @default(autoincrement())
   userId      Int?
   user        User?     @relation(name: "UserAuditLogs", fields: [userId], references: [id])
+  adminId     Int?
+  admin       Admin?    @relation(fields: [adminId], references: [id])
   action      String    // "create", "update", "delete", "login", etc.
   entityType  String    // "user", "order", "bundle", etc.
   entityId    String?   // ID of the affected entity
@@ -212,6 +214,7 @@ model AdminAuditLog {
   createdAt   DateTime  @default(now())
 
   @@index([userId])
+  @@index([adminId])
   @@index([action])
   @@index([entityType])
   @@index([createdAt])
@@ -258,4 +261,33 @@ model PaymentMethod {
   paymentSettings   PaymentSettings @relation(fields: [paymentSettingsId], references: [id], onDelete: Cascade)
 
   @@index([paymentSettingsId])
+}
+
+// New model for admin users
+model Admin {
+  id             Int       @id @default(autoincrement())
+  email          String    @unique
+  name           String
+  password       String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  lastLoginAt    DateTime?
+  passwordResets AdminPasswordReset?
+
+  // Audit logs created by this admin
+  auditLogs      AdminAuditLog[]
+
+  @@index([email])
+}
+
+// New model for admin password resets
+model AdminPasswordReset {
+  id        Int      @id @default(autoincrement())
+  adminId   Int      @unique
+  admin     Admin    @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
 }

@@ -3,8 +3,7 @@
 import jwt from 'jsonwebtoken';
 
 interface TokenPayload {
-  userId?: number;
-  referralUserId?: number;
+  adminId?: number;
   [key: string]: any;
 }
 

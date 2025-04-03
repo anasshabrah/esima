@@ -1,87 +1,50 @@
 'use client';
 
 import React from 'react';
-import { usePathname } from 'next/navigation';
-import { Menu, Bell, Sun, Moon } from 'lucide-react';
 import { useAdminAuth } from '@/context/AdminAuthContext';
+import { Bell, User, Menu } from 'lucide-react';
 
-interface AdminHeaderProps {
-  toggleSidebar?: () => void;
-}
-
-export default function AdminHeader({ toggleSidebar }: AdminHeaderProps) {
-  const pathname = usePathname();
-  const { user } = useAdminAuth();
-  const [darkMode, setDarkMode] = React.useState(false);
-
-  // Get page title from pathname
-  const getPageTitle = () => {
-    if (pathname === '/admin') return 'Dashboard';
-    
-    const path = pathname.split('/').filter(Boolean);
-    if (path.length >= 2) {
-      // Capitalize the second part of the path (e.g., /admin/users -> Users)
-      return path[1].charAt(0).toUpperCase() + path[1].slice(1);
-    }
-    
-    return 'Admin Panel';
-  };
-
-  // Toggle dark mode
-  const toggleDarkMode = () => {
-    const newMode = !darkMode;
-    setDarkMode(newMode);
-    
-    if (newMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  };
+const AdminHeader: React.FC = () => {
+  const { admin } = useAdminAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
   return (
-    <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-      <div className="px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center">
-          <button
-            onClick={toggleSidebar}
-            className="p-2 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-100 focus:outline-none focus:bg-gray-100 focus:text-gray-900 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700 lg:hidden"
-          >
-            <Menu size={20} />
-          </button>
-          <h1 className="ml-2 text-xl font-semibold text-gray-800 dark:text-white lg:ml-0">
-            {getPageTitle()}
-          </h1>
+    <header className="bg-white shadow h-16 flex items-center justify-between px-6">
+      {/* Mobile menu button */}
+      <button 
+        className="md:hidden text-gray-500 focus:outline-none"
+        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+      >
+        <Menu className="h-6 w-6" />
+      </button>
+
+      {/* Search bar - can be implemented later */}
+      <div className="flex-1 max-w-md ml-4 md:ml-0">
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="Search..."
+            className="w-full px-4 py-2 border rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary"
+          />
         </div>
-        
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={toggleDarkMode}
-            className="p-2 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-100 focus:outline-none focus:bg-gray-100 focus:text-gray-900 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700"
-            aria-label="Toggle dark mode"
-          >
-            {darkMode ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
-          
-          <button
-            className="p-2 rounded-md text-gray-500 hover:text-gray-900 hover:bg-gray-100 focus:outline-none focus:bg-gray-100 focus:text-gray-900 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700"
-            aria-label="View notifications"
-          >
-            <Bell size={20} />
-          </button>
-          
-          <div className="relative">
-            <button
-              className="flex items-center text-sm rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
-              aria-label="User menu"
-            >
-              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                {user?.name ? user.name.charAt(0).toUpperCase() : user?.email?.charAt(0).toUpperCase() || 'A'}
-              </div>
-            </button>
+      </div>
+
+      {/* Right side icons */}
+      <div className="flex items-center">
+        <button className="p-2 text-gray-500 rounded-full hover:bg-gray-100 focus:outline-none">
+          <Bell className="h-5 w-5" />
+        </button>
+        <div className="ml-3 relative">
+          <div className="flex items-center">
+            <div className="h-8 w-8 rounded-full bg-primary text-white flex items-center justify-center">
+              <User className="h-4 w-4" />
+            </div>
+            <span className="ml-2 text-gray-700 hidden md:block">{admin?.name || 'Admin'}</span>
           </div>
         </div>
       </div>
     </header>
   );
-}
+};
+
+export default AdminHeader;

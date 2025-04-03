@@ -1,0 +1,3709 @@
+--- C:\Users\hanos\esima\src\app\api\admin\audit-logs\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse query parameters
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '20');
+    const search = searchParams.get('search') || '';
+    const action = searchParams.get('action') || '';
+    const userId = searchParams.get('userId') || '';
+    const resourceType = searchParams.get('resourceType') || '';
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
+    
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+
+    // Build search conditions
+    let whereCondition: any = {};
+    
+    if (search) {
+      whereCondition = {
+        OR: [
+          { details: { contains: search, mode: 'insensitive' } },
+          { resourceId: { contains: search, mode: 'insensitive' } },
+          { ipAddress: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    if (action) {
+      whereCondition.action = action;
+    }
+
+    if (userId) {
+      whereCondition.userId = userId;
+    }
+
+    if (resourceType) {
+      whereCondition.resourceType = resourceType;
+    }
+
+    // Date range filtering
+    if (startDate || endDate) {
+      whereCondition.timestamp = {};
+      
+      if (startDate) {
+        whereCondition.timestamp.gte = new Date(startDate);
+      }
+      
+      if (endDate) {
+        // Set to end of the day for the end date
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59, 999);
+        whereCondition.timestamp.lte = endDateTime;
+      }
+    }
+
+    // Fetch audit logs with pagination
+    const [logs, totalLogs] = await Promise.all([
+      prisma.auditLog.findMany({
+        where: whereCondition,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              isAdmin: true,
+            },
+          },
+        },
+        skip,
+        take: limit,
+        orderBy: { timestamp: 'desc' },
+      }),
+      prisma.auditLog.count({ where: whereCondition }),
+    ]);
+
+    // Calculate total pages
+    const totalPages = Math.ceil(totalLogs / limit);
+
+    return NextResponse.json({
+      logs,
+      pagination: {
+        total: totalLogs,
+        pages: totalPages,
+        page,
+        limit,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching audit logs:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch audit logs' },
+      { status: 500 }
+    );
+  }
+}
+
+// We don't implement POST, PATCH, or DELETE for audit logs as they should be immutable
+// Audit logs should only be created through the system's internal processes
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\auth\forgot-password\route.ts ---
+// src/app/api/admin/auth/forgot-password/route.ts
+
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { sendEmail } from '@/utils/email';
+import crypto from 'crypto';
+import logger from '@/utils/logger.server';
+import { z } from 'zod';
+
+// Define the schema for validating the request body
+const forgotPasswordSchema = z.object({
+  email: z.string().email('Invalid email address.'),
+});
+
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  try {
+    const body = await req.json();
+
+    // Validate input data
+    const parsed = forgotPasswordSchema.safeParse(body);
+    if (!parsed.success) {
+      logger.warn('Invalid input data for admin forgot-password.', { errors: parsed.error.errors });
+      return NextResponse.json(
+        { error: 'Invalid email address.', details: parsed.error.errors },
+        { status: 400 }
+      );
+    }
+
+    const { email } = parsed.data;
+
+    // Find the admin user
+    const admin = await prisma.admin.findUnique({ where: { email } });
+
+    if (!admin) {
+      // To prevent email enumeration, respond with success even if admin doesn't exist
+      logger.warn('Admin forgot password requested for non-existent email.', { email });
+      return NextResponse.json(
+        { message: 'If that email is registered, you will receive a password reset link.' },
+        { status: 200 }
+      );
+    }
+
+    // Generate a secure token
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+
+    // Create or update password reset token
+    await prisma.adminPasswordReset.upsert({
+      where: { adminId: admin.id },
+      update: { token, expiresAt },
+      create: { adminId: admin.id, token, expiresAt },
+    });
+
+    // Create password reset link
+    const resetLink = `${process.env.NEXT_PUBLIC_BASE_URL}/admin/reset-password?token=${token}`;
+
+    // Send password reset email
+    const emailContent = `
+      <h1>Admin Password Reset Request</h1>
+      <p>Hello ${admin.name},</p>
+      <p>You requested a password reset for your admin account. Click the link below to reset your password:</p>
+      <p><a href="${resetLink}">Reset Password</a></p>
+      <p>This link will expire in 1 hour.</p>
+      <p>If you did not request a password reset, please ignore this email.</p>
+      <p>Best regards,<br/>Your Company Team</p>
+    `;
+
+    await sendEmail({
+      to: email,
+      subject: 'Admin Password Reset Request',
+      html: emailContent,
+    });
+
+    logger.info('Admin password reset email sent.', { adminId: admin.id, email });
+
+    return NextResponse.json(
+      { message: 'If that email is registered, you will receive a password reset link.' },
+      { status: 200 }
+    );
+  } catch (error: any) {
+    logger.error('Error in admin forgot-password.', { error: error.message });
+    return NextResponse.json(
+      { error: 'Internal server error.' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\auth\me\route.ts ---
+// src/app/api/admin/auth/me/route.ts
+
+import { NextRequest, NextResponse } from 'next/server';
+import { verifyAdminAccess } from '@/utils/adminAuth';
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin access
+    const { isAuthorized, admin, error } = await verifyAdminAccess(request);
+
+    if (!isAuthorized) {
+      return NextResponse.json(
+        { error: error || 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    // Return the admin data
+    return NextResponse.json(admin, { status: 200 });
+  } catch (error: any) {
+    console.error('Error fetching admin data:', error);
+    return NextResponse.json(
+      { error: 'Internal server error.' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\auth\reset-password\route.ts ---
+// src/app/api/admin/auth/reset-password/route.ts
+
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import bcrypt from 'bcryptjs';
+import { z } from 'zod';
+import logger from '@/utils/logger.server';
+
+// Define the schema for validating the request body
+const resetPasswordSchema = z.object({
+  token: z.string().min(1, 'Token is required.'),
+  password: z.string().min(8, 'Password must be at least 8 characters.'),
+});
+
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  try {
+    const body = await req.json();
+
+    // Validate input data
+    const parsed = resetPasswordSchema.safeParse(body);
+    if (!parsed.success) {
+      logger.warn('Invalid input data for admin reset-password.', { errors: parsed.error.errors });
+      return NextResponse.json(
+        { error: 'Invalid input data.', details: parsed.error.errors },
+        { status: 400 }
+      );
+    }
+
+    const { token, password } = parsed.data;
+
+    // Find the password reset record
+    const passwordReset = await prisma.adminPasswordReset.findUnique({
+      where: { token },
+      include: { admin: true },
+    });
+
+    // Check if token exists and is valid
+    if (!passwordReset) {
+      return NextResponse.json(
+        { error: 'Invalid or expired token.' },
+        { status: 400 }
+      );
+    }
+
+    // Check if token is expired
+    if (passwordReset.expiresAt < new Date()) {
+      return NextResponse.json(
+        { error: 'Token has expired. Please request a new password reset.' },
+        { status: 400 }
+      );
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Update the admin's password
+    await prisma.admin.update({
+      where: { id: passwordReset.adminId },
+      data: { password: hashedPassword },
+    });
+
+    // Delete the password reset token
+    await prisma.adminPasswordReset.delete({
+      where: { id: passwordReset.id },
+    });
+
+    logger.info('Admin password reset successful.', { adminId: passwordReset.adminId });
+
+    return NextResponse.json(
+      { message: 'Password has been reset successfully.' },
+      { status: 200 }
+    );
+  } catch (error: any) {
+    logger.error('Error in admin reset-password.', { error: error.message });
+    return NextResponse.json(
+      { error: 'Internal server error.' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\auth\signin\route.ts ---
+// src/app/api/admin/auth/signin/route.ts
+
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import bcrypt from 'bcryptjs';
+import { generateAuthToken } from '@/utils/auth';
+
+export async function POST(request: NextRequest) {
+  try {
+    const { email, password } = await request.json();
+
+    if (!email || !password) {
+      return NextResponse.json(
+        { error: 'Email and password are required.' },
+        { status: 400 }
+      );
+    }
+
+    // Find the admin user
+    const admin = await prisma.admin.findUnique({ where: { email } });
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: 'Invalid email or password.' },
+        { status: 401 }
+      );
+    }
+
+    // Check password
+    const isValid = await bcrypt.compare(password, admin.password);
+    if (!isValid) {
+      return NextResponse.json(
+        { error: 'Invalid email or password.' },
+        { status: 401 }
+      );
+    }
+
+    // Generate JWT token
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET environment variable is not set');
+    }
+
+    const token = generateAuthToken({ adminId: admin.id });
+    
+    if (!token) {
+      throw new Error('Failed to generate authentication token');
+    }
+
+    // Update last login time
+    await prisma.admin.update({
+      where: { id: admin.id },
+      data: { lastLoginAt: new Date() }
+    });
+
+    // Exclude sensitive fields before sending the admin object
+    const { password: _, ...safeAdmin } = admin;
+
+    return NextResponse.json({ admin: safeAdmin, token }, { status: 200 });
+  } catch (error: any) {
+    console.error('Admin signin error:', error);
+    return NextResponse.json({ error: 'Internal server error.' }, { status: 500 });
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\bundles\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse query parameters
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const search = searchParams.get('search') || '';
+    
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+
+    // Build search conditions
+    let whereCondition: any = {};
+    if (search) {
+      whereCondition = {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    // Fetch bundles with pagination
+    const [bundles, totalBundles] = await Promise.all([
+      prisma.bundle.findMany({
+        where: whereCondition,
+        include: {
+          countries: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
+          },
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.bundle.count({ where: whereCondition }),
+    ]);
+
+    // Calculate total pages
+    const totalPages = Math.ceil(totalBundles / limit);
+
+    return NextResponse.json({
+      bundles,
+      pagination: {
+        total: totalBundles,
+        pages: totalPages,
+        page,
+        limit,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching bundles:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch bundles' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      name, 
+      description, 
+      price, 
+      dataAmount, 
+      dataUnit, 
+      duration, 
+      isActive, 
+      countryIds 
+    } = body;
+
+    // Validate required fields
+    if (!name || !price || !dataAmount || !dataUnit || !duration) {
+      return NextResponse.json(
+        { error: 'Name, price, dataAmount, dataUnit, and duration are required' },
+        { status: 400 }
+      );
+    }
+
+    // Create new bundle
+    const newBundle = await prisma.bundle.create({
+      data: {
+        name,
+        description,
+        price: parseFloat(price),
+        dataAmount: parseFloat(dataAmount),
+        dataUnit,
+        duration: parseInt(duration),
+        isActive: isActive !== undefined ? isActive : true,
+        ...(countryIds && countryIds.length > 0 && {
+          countries: {
+            connect: countryIds.map((id: string) => ({ id })),
+          },
+        }),
+      },
+      include: {
+        countries: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'CREATE',
+        resourceType: 'BUNDLE',
+        resourceId: newBundle.id,
+        details: `Admin created new bundle: ${newBundle.name}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ bundle: newBundle }, { status: 201 });
+  } catch (error) {
+    console.error('Error creating bundle:', error);
+    return NextResponse.json(
+      { error: 'Failed to create bundle' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\bundles\[id]\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Fetch bundle by ID
+    const bundle = await prisma.bundle.findUnique({
+      where: { id },
+      include: {
+        countries: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            flagUrl: true,
+          },
+        },
+      },
+    });
+
+    if (!bundle) {
+      return NextResponse.json(
+        { error: 'Bundle not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ bundle });
+  } catch (error) {
+    console.error('Error fetching bundle:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch bundle' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      name, 
+      description, 
+      price, 
+      dataAmount, 
+      dataUnit, 
+      duration, 
+      isActive, 
+      countryIds 
+    } = body;
+
+    // Check if bundle exists
+    const existingBundle = await prisma.bundle.findUnique({
+      where: { id },
+      include: {
+        countries: true,
+      },
+    });
+
+    if (!existingBundle) {
+      return NextResponse.json(
+        { error: 'Bundle not found' },
+        { status: 404 }
+      );
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (price !== undefined) updateData.price = parseFloat(price);
+    if (dataAmount !== undefined) updateData.dataAmount = parseFloat(dataAmount);
+    if (dataUnit !== undefined) updateData.dataUnit = dataUnit;
+    if (duration !== undefined) updateData.duration = parseInt(duration);
+    if (isActive !== undefined) updateData.isActive = isActive;
+
+    // Handle country connections/disconnections if provided
+    if (countryIds && Array.isArray(countryIds)) {
+      // Get current country IDs
+      const currentCountryIds = existingBundle.countries.map(country => country.id);
+      
+      // Determine which countries to disconnect (those in current but not in new list)
+      const countriesToDisconnect = currentCountryIds.filter(id => !countryIds.includes(id));
+      
+      // Determine which countries to connect (those in new list but not in current)
+      const countriesToConnect = countryIds.filter(id => !currentCountryIds.includes(id));
+
+      if (countriesToDisconnect.length > 0) {
+        updateData.countries = {
+          ...(updateData.countries || {}),
+          disconnect: countriesToDisconnect.map(id => ({ id })),
+        };
+      }
+
+      if (countriesToConnect.length > 0) {
+        updateData.countries = {
+          ...(updateData.countries || {}),
+          connect: countriesToConnect.map(id => ({ id })),
+        };
+      }
+    }
+
+    // Update bundle
+    const updatedBundle = await prisma.bundle.update({
+      where: { id },
+      data: updateData,
+      include: {
+        countries: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'UPDATE',
+        resourceType: 'BUNDLE',
+        resourceId: id,
+        details: `Admin updated bundle: ${updatedBundle.name}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ bundle: updatedBundle });
+  } catch (error) {
+    console.error('Error updating bundle:', error);
+    return NextResponse.json(
+      { error: 'Failed to update bundle' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Check if bundle exists
+    const existingBundle = await prisma.bundle.findUnique({
+      where: { id },
+      select: { name: true },
+    });
+
+    if (!existingBundle) {
+      return NextResponse.json(
+        { error: 'Bundle not found' },
+        { status: 404 }
+      );
+    }
+
+    // Check if bundle is used in any orders
+    const bundleInUse = await prisma.orderItem.findFirst({
+      where: { bundleId: id },
+    });
+
+    if (bundleInUse) {
+      return NextResponse.json(
+        { error: 'Cannot delete bundle as it is used in orders' },
+        { status: 400 }
+      );
+    }
+
+    // Delete bundle
+    await prisma.bundle.delete({
+      where: { id },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'DELETE',
+        resourceType: 'BUNDLE',
+        resourceId: id,
+        details: `Admin deleted bundle: ${existingBundle.name}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting bundle:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete bundle' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\countries\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse query parameters
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const search = searchParams.get('search') || '';
+    
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+
+    // Build search conditions
+    let whereCondition: any = {};
+    if (search) {
+      whereCondition = {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { code: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    // Fetch countries with pagination
+    const [countries, totalCountries] = await Promise.all([
+      prisma.country.findMany({
+        where: whereCondition,
+        include: {
+          bundles: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+        skip,
+        take: limit,
+        orderBy: { name: 'asc' },
+      }),
+      prisma.country.count({ where: whereCondition }),
+    ]);
+
+    // Calculate total pages
+    const totalPages = Math.ceil(totalCountries / limit);
+
+    return NextResponse.json({
+      countries,
+      pagination: {
+        total: totalCountries,
+        pages: totalPages,
+        page,
+        limit,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching countries:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch countries' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      name, 
+      code, 
+      flagUrl, 
+      isActive, 
+      bundleIds,
+      information
+    } = body;
+
+    // Validate required fields
+    if (!name || !code) {
+      return NextResponse.json(
+        { error: 'Name and code are required' },
+        { status: 400 }
+      );
+    }
+
+    // Check if country already exists
+    const existingCountry = await prisma.country.findFirst({
+      where: {
+        OR: [
+          { name },
+          { code },
+        ],
+      },
+    });
+
+    if (existingCountry) {
+      return NextResponse.json(
+        { error: 'Country with this name or code already exists' },
+        { status: 409 }
+      );
+    }
+
+    // Create new country
+    const newCountry = await prisma.country.create({
+      data: {
+        name,
+        code,
+        flagUrl,
+        isActive: isActive !== undefined ? isActive : true,
+        information,
+        ...(bundleIds && bundleIds.length > 0 && {
+          bundles: {
+            connect: bundleIds.map((id: string) => ({ id })),
+          },
+        }),
+      },
+      include: {
+        bundles: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'CREATE',
+        resourceType: 'COUNTRY',
+        resourceId: newCountry.id,
+        details: `Admin created new country: ${newCountry.name} (${newCountry.code})`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ country: newCountry }, { status: 201 });
+  } catch (error) {
+    console.error('Error creating country:', error);
+    return NextResponse.json(
+      { error: 'Failed to create country' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\countries\[id]\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Fetch country by ID
+    const country = await prisma.country.findUnique({
+      where: { id },
+      include: {
+        bundles: {
+          select: {
+            id: true,
+            name: true,
+            dataAmount: true,
+            dataUnit: true,
+            duration: true,
+            price: true,
+            isActive: true,
+          },
+        },
+      },
+    });
+
+    if (!country) {
+      return NextResponse.json(
+        { error: 'Country not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ country });
+  } catch (error) {
+    console.error('Error fetching country:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch country' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      name, 
+      code, 
+      flagUrl, 
+      isActive, 
+      bundleIds,
+      information
+    } = body;
+
+    // Check if country exists
+    const existingCountry = await prisma.country.findUnique({
+      where: { id },
+      include: {
+        bundles: true,
+      },
+    });
+
+    if (!existingCountry) {
+      return NextResponse.json(
+        { error: 'Country not found' },
+        { status: 404 }
+      );
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (code !== undefined) updateData.code = code;
+    if (flagUrl !== undefined) updateData.flagUrl = flagUrl;
+    if (isActive !== undefined) updateData.isActive = isActive;
+    if (information !== undefined) updateData.information = information;
+
+    // Handle bundle connections/disconnections if provided
+    if (bundleIds && Array.isArray(bundleIds)) {
+      // Get current bundle IDs
+      const currentBundleIds = existingCountry.bundles.map(bundle => bundle.id);
+      
+      // Determine which bundles to disconnect (those in current but not in new list)
+      const bundlesToDisconnect = currentBundleIds.filter(id => !bundleIds.includes(id));
+      
+      // Determine which bundles to connect (those in new list but not in current)
+      const bundlesToConnect = bundleIds.filter(id => !currentBundleIds.includes(id));
+
+      if (bundlesToDisconnect.length > 0) {
+        updateData.bundles = {
+          ...(updateData.bundles || {}),
+          disconnect: bundlesToDisconnect.map(id => ({ id })),
+        };
+      }
+
+      if (bundlesToConnect.length > 0) {
+        updateData.bundles = {
+          ...(updateData.bundles || {}),
+          connect: bundlesToConnect.map(id => ({ id })),
+        };
+      }
+    }
+
+    // Update country
+    const updatedCountry = await prisma.country.update({
+      where: { id },
+      data: updateData,
+      include: {
+        bundles: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'UPDATE',
+        resourceType: 'COUNTRY',
+        resourceId: id,
+        details: `Admin updated country: ${updatedCountry.name} (${updatedCountry.code})`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ country: updatedCountry });
+  } catch (error) {
+    console.error('Error updating country:', error);
+    return NextResponse.json(
+      { error: 'Failed to update country' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Check if country exists
+    const existingCountry = await prisma.country.findUnique({
+      where: { id },
+      select: { 
+        name: true,
+        code: true,
+        bundles: {
+          select: { id: true }
+        }
+      },
+    });
+
+    if (!existingCountry) {
+      return NextResponse.json(
+        { error: 'Country not found' },
+        { status: 404 }
+      );
+    }
+
+    // Check if country has associated bundles
+    if (existingCountry.bundles.length > 0) {
+      // Instead of preventing deletion, we can disconnect the bundles first
+      await prisma.country.update({
+        where: { id },
+        data: {
+          bundles: {
+            disconnect: existingCountry.bundles.map(bundle => ({ id: bundle.id })),
+          },
+        },
+      });
+    }
+
+    // Delete country
+    await prisma.country.delete({
+      where: { id },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'DELETE',
+        resourceType: 'COUNTRY',
+        resourceId: id,
+        details: `Admin deleted country: ${existingCountry.name} (${existingCountry.code})`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting country:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete country' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\coupons\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse query parameters
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const search = searchParams.get('search') || '';
+    const active = searchParams.get('active');
+    
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+
+    // Build search conditions
+    let whereCondition: any = {};
+    if (search) {
+      whereCondition = {
+        OR: [
+          { code: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    if (active !== null && active !== undefined) {
+      whereCondition.isActive = active === 'true';
+    }
+
+    // Fetch coupons with pagination
+    const [coupons, totalCoupons] = await Promise.all([
+      prisma.coupon.findMany({
+        where: whereCondition,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.coupon.count({ where: whereCondition }),
+    ]);
+
+    // Calculate total pages
+    const totalPages = Math.ceil(totalCoupons / limit);
+
+    return NextResponse.json({
+      coupons,
+      pagination: {
+        total: totalCoupons,
+        pages: totalPages,
+        page,
+        limit,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching coupons:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch coupons' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      code, 
+      discountType, 
+      discountValue, 
+      description, 
+      maxUses, 
+      expiryDate, 
+      isActive,
+      minOrderAmount
+    } = body;
+
+    // Validate required fields
+    if (!code || !discountType || !discountValue) {
+      return NextResponse.json(
+        { error: 'Code, discount type, and discount value are required' },
+        { status: 400 }
+      );
+    }
+
+    // Check if coupon code already exists
+    const existingCoupon = await prisma.coupon.findFirst({
+      where: { code },
+    });
+
+    if (existingCoupon) {
+      return NextResponse.json(
+        { error: 'Coupon with this code already exists' },
+        { status: 409 }
+      );
+    }
+
+    // Create new coupon
+    const newCoupon = await prisma.coupon.create({
+      data: {
+        code,
+        discountType,
+        discountValue: parseFloat(discountValue),
+        description,
+        maxUses: maxUses ? parseInt(maxUses) : null,
+        expiryDate: expiryDate ? new Date(expiryDate) : null,
+        isActive: isActive !== undefined ? isActive : true,
+        minOrderAmount: minOrderAmount ? parseFloat(minOrderAmount) : null,
+        usedCount: 0,
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'CREATE',
+        resourceType: 'COUPON',
+        resourceId: newCoupon.id,
+        details: `Admin created new coupon: ${newCoupon.code}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ coupon: newCoupon }, { status: 201 });
+  } catch (error) {
+    console.error('Error creating coupon:', error);
+    return NextResponse.json(
+      { error: 'Failed to create coupon' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\coupons\[id]\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Fetch coupon by ID
+    const coupon = await prisma.coupon.findUnique({
+      where: { id },
+    });
+
+    if (!coupon) {
+      return NextResponse.json(
+        { error: 'Coupon not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ coupon });
+  } catch (error) {
+    console.error('Error fetching coupon:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch coupon' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      code, 
+      discountType, 
+      discountValue, 
+      description, 
+      maxUses, 
+      expiryDate, 
+      isActive,
+      minOrderAmount,
+      usedCount
+    } = body;
+
+    // Check if coupon exists
+    const existingCoupon = await prisma.coupon.findUnique({
+      where: { id },
+    });
+
+    if (!existingCoupon) {
+      return NextResponse.json(
+        { error: 'Coupon not found' },
+        { status: 404 }
+      );
+    }
+
+    // If code is being changed, check if new code already exists
+    if (code && code !== existingCoupon.code) {
+      const codeExists = await prisma.coupon.findFirst({
+        where: { 
+          code,
+          id: { not: id }
+        },
+      });
+
+      if (codeExists) {
+        return NextResponse.json(
+          { error: 'Coupon with this code already exists' },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    if (code !== undefined) updateData.code = code;
+    if (discountType !== undefined) updateData.discountType = discountType;
+    if (discountValue !== undefined) updateData.discountValue = parseFloat(discountValue);
+    if (description !== undefined) updateData.description = description;
+    if (maxUses !== undefined) updateData.maxUses = maxUses ? parseInt(maxUses) : null;
+    if (expiryDate !== undefined) updateData.expiryDate = expiryDate ? new Date(expiryDate) : null;
+    if (isActive !== undefined) updateData.isActive = isActive;
+    if (minOrderAmount !== undefined) updateData.minOrderAmount = minOrderAmount ? parseFloat(minOrderAmount) : null;
+    if (usedCount !== undefined) updateData.usedCount = parseInt(usedCount);
+
+    // Update coupon
+    const updatedCoupon = await prisma.coupon.update({
+      where: { id },
+      data: updateData,
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'UPDATE',
+        resourceType: 'COUPON',
+        resourceId: id,
+        details: `Admin updated coupon: ${updatedCoupon.code}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ coupon: updatedCoupon });
+  } catch (error) {
+    console.error('Error updating coupon:', error);
+    return NextResponse.json(
+      { error: 'Failed to update coupon' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Check if coupon exists
+    const existingCoupon = await prisma.coupon.findUnique({
+      where: { id },
+      select: { code: true, usedCount: true },
+    });
+
+    if (!existingCoupon) {
+      return NextResponse.json(
+        { error: 'Coupon not found' },
+        { status: 404 }
+      );
+    }
+
+    // Check if coupon has been used
+    if (existingCoupon.usedCount > 0) {
+      // Instead of deleting, we can deactivate the coupon
+      const deactivatedCoupon = await prisma.coupon.update({
+        where: { id },
+        data: { isActive: false },
+      });
+
+      // Log the action
+      await prisma.auditLog.create({
+        data: {
+          userId: authResult.user?.id,
+          action: 'UPDATE',
+          resourceType: 'COUPON',
+          resourceId: id,
+          details: `Admin deactivated coupon: ${existingCoupon.code} (instead of deletion because it has been used)`,
+          ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+        },
+      });
+
+      return NextResponse.json({ 
+        coupon: deactivatedCoupon,
+        message: 'Coupon has been used and cannot be deleted. It has been deactivated instead.'
+      });
+    }
+
+    // Delete coupon
+    await prisma.coupon.delete({
+      where: { id },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'DELETE',
+        resourceType: 'COUPON',
+        resourceId: id,
+        details: `Admin deleted coupon: ${existingCoupon.code}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting coupon:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete coupon' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\dashboard\route.ts ---
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { verifyAuthToken } from '@/utils/auth';
+
+// Helper function to verify admin access
+async function verifyAdminAccess(request) {
+  // Get the authorization header
+  const authHeader = request.headers.get('authorization');
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return { isAuthorized: false, error: 'Unauthorized: No token provided' };
+  }
+  
+  const token = authHeader.split(' ')[1];
+  
+  try {
+    // Verify the token and get the user
+    const payload = verifyAuthToken(token);
+    
+    if (!payload || !payload.userId) {
+      return { isAuthorized: false, error: 'Unauthorized: Invalid token' };
+    }
+    
+    // Get the user from the database
+    const user = await prisma.user.findUnique({
+      where: { id: parseInt(payload.userId) }
+    });
+    
+    if (!user) {
+      return { isAuthorized: false, error: 'Unauthorized: User not found' };
+    }
+    
+    // Check if the user is an admin
+    if (!user.isAdmin) {
+      return { isAuthorized: false, error: 'Forbidden: Admin access required' };
+    }
+    
+    return { isAuthorized: true, user };
+  } catch (error) {
+    console.error('Error verifying admin access:', error);
+    return { isAuthorized: false, error: 'Unauthorized: Invalid token' };
+  }
+}
+
+// GET handler for dashboard data
+export async function GET(request) {
+  const { isAuthorized, user, error } = await verifyAdminAccess(request);
+  
+  if (!isAuthorized) {
+    return NextResponse.json({ error }, { status: 401 });
+  }
+  
+  try {
+    // Get current date
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const previousMonth = (currentMonth - 1 + 12) % 12;
+    const currentYear = now.getFullYear();
+    const previousYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+    
+    // Start of current and previous months
+    const startOfCurrentMonth = new Date(currentYear, currentMonth, 1);
+    const startOfPreviousMonth = new Date(previousYear, previousMonth, 1);
+    
+    // Get total users
+    const totalUsers = await prisma.user.count();
+    
+    // Get users created in current and previous months
+    const usersCurrentMonth = await prisma.user.count({
+      where: {
+        createdAt: {
+          gte: startOfCurrentMonth
+        }
+      }
+    });
+    
+    const usersPreviousMonth = await prisma.user.count({
+      where: {
+        createdAt: {
+          gte: startOfPreviousMonth,
+          lt: startOfCurrentMonth
+        }
+      }
+    });
+    
+    // Calculate user growth percentage
+    const usersChange = usersPreviousMonth > 0 
+      ? Math.round(((usersCurrentMonth - usersPreviousMonth) / usersPreviousMonth) * 100) 
+      : 0;
+    
+    // Get total orders
+    const totalOrders = await prisma.order.count();
+    
+    // Get orders created in current and previous months
+    const ordersCurrentMonth = await prisma.order.count({
+      where: {
+        createdAt: {
+          gte: startOfCurrentMonth
+        }
+      }
+    });
+    
+    const ordersPreviousMonth = await prisma.order.count({
+      where: {
+        createdAt: {
+          gte: startOfPreviousMonth,
+          lt: startOfCurrentMonth
+        }
+      }
+    });
+    
+    // Calculate order growth percentage
+    const ordersChange = ordersPreviousMonth > 0 
+      ? Math.round(((ordersCurrentMonth - ordersPreviousMonth) / ordersPreviousMonth) * 100) 
+      : 0;
+    
+    // Get total revenue
+    const totalRevenueResult = await prisma.order.aggregate({
+      _sum: {
+        amount: true
+      }
+    });
+    
+    const totalRevenue = totalRevenueResult._sum.amount || 0;
+    
+    // Get revenue for current and previous months
+    const revenueCurrentMonth = await prisma.order.aggregate({
+      where: {
+        createdAt: {
+          gte: startOfCurrentMonth
+        }
+      },
+      _sum: {
+        amount: true
+      }
+    });
+    
+    const revenuePreviousMonth = await prisma.order.aggregate({
+      where: {
+        createdAt: {
+          gte: startOfPreviousMonth,
+          lt: startOfCurrentMonth
+        }
+      },
+      _sum: {
+        amount: true
+      }
+    });
+    
+    // Calculate revenue growth percentage
+    const currentMonthRevenue = revenueCurrentMonth._sum.amount || 0;
+    const previousMonthRevenue = revenuePreviousMonth._sum.amount || 0;
+    
+    const revenueChange = previousMonthRevenue > 0 
+      ? Math.round(((currentMonthRevenue - previousMonthRevenue) / previousMonthRevenue) * 100) 
+      : 0;
+    
+    // Get active eSIMs count
+    const activeEsims = await prisma.esim.count({
+      where: {
+        status: 'ACTIVE'
+      }
+    });
+    
+    // Get pending withdrawals count
+    const pendingWithdrawals = await prisma.withdrawal.count({
+      where: {
+        status: 'PENDING'
+      }
+    });
+    
+    // Log the action
+    await prisma.adminAuditLog.create({
+      data: {
+        userId: user.id,
+        action: 'view',
+        entityType: 'dashboard',
+        details: JSON.stringify({ timestamp: new Date() }),
+        ipAddress: request.headers.get('x-forwarded-for') || request.ip,
+        userAgent: request.headers.get('user-agent'),
+      },
+    });
+    
+    return NextResponse.json({
+      totalUsers,
+      totalOrders,
+      totalRevenue,
+      activeEsims,
+      pendingWithdrawals,
+      usersChange,
+      ordersChange,
+      revenueChange
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard data:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch dashboard data' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\esims\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse query parameters
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const search = searchParams.get('search') || '';
+    const status = searchParams.get('status') || '';
+    
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+
+    // Build search conditions
+    let whereCondition: any = {};
+    if (search) {
+      whereCondition = {
+        OR: [
+          { iccid: { contains: search, mode: 'insensitive' } },
+          { order: { orderNumber: { contains: search, mode: 'insensitive' } } },
+          { order: { user: { email: { contains: search, mode: 'insensitive' } } } },
+        ],
+      };
+    }
+
+    if (status) {
+      whereCondition.status = status;
+    }
+
+    // Fetch eSIMs with pagination
+    const [esims, totalEsims] = await Promise.all([
+      prisma.eSim.findMany({
+        where: whereCondition,
+        include: {
+          order: {
+            select: {
+              id: true,
+              orderNumber: true,
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                },
+              },
+            },
+          },
+          bundle: {
+            select: {
+              id: true,
+              name: true,
+              dataAmount: true,
+              dataUnit: true,
+              duration: true,
+            },
+          },
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.eSim.count({ where: whereCondition }),
+    ]);
+
+    // Calculate total pages
+    const totalPages = Math.ceil(totalEsims / limit);
+
+    return NextResponse.json({
+      esims,
+      pagination: {
+        total: totalEsims,
+        pages: totalPages,
+        page,
+        limit,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching eSIMs:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch eSIMs' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      iccid, 
+      orderId, 
+      bundleId, 
+      status, 
+      activationDate, 
+      expiryDate,
+      dataUsed,
+      notes
+    } = body;
+
+    // Validate required fields
+    if (!iccid || !bundleId) {
+      return NextResponse.json(
+        { error: 'ICCID and bundle ID are required' },
+        { status: 400 }
+      );
+    }
+
+    // Check if eSIM with this ICCID already exists
+    const existingESim = await prisma.eSim.findFirst({
+      where: { iccid },
+    });
+
+    if (existingESim) {
+      return NextResponse.json(
+        { error: 'eSIM with this ICCID already exists' },
+        { status: 409 }
+      );
+    }
+
+    // Check if bundle exists
+    const bundle = await prisma.bundle.findUnique({
+      where: { id: bundleId },
+    });
+
+    if (!bundle) {
+      return NextResponse.json(
+        { error: 'Bundle not found' },
+        { status: 404 }
+      );
+    }
+
+    // Check if order exists (if provided)
+    if (orderId) {
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+      });
+
+      if (!order) {
+        return NextResponse.json(
+          { error: 'Order not found' },
+          { status: 404 }
+        );
+      }
+    }
+
+    // Create new eSIM
+    const newESim = await prisma.eSim.create({
+      data: {
+        iccid,
+        status: status || 'INACTIVE',
+        activationDate: activationDate ? new Date(activationDate) : null,
+        expiryDate: expiryDate ? new Date(expiryDate) : null,
+        dataUsed: dataUsed ? parseFloat(dataUsed) : 0,
+        notes,
+        ...(orderId && { orderId }),
+        bundleId,
+      },
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+        bundle: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'CREATE',
+        resourceType: 'ESIM',
+        resourceId: newESim.id,
+        details: `Admin created new eSIM: ${newESim.iccid}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ esim: newESim }, { status: 201 });
+  } catch (error) {
+    console.error('Error creating eSIM:', error);
+    return NextResponse.json(
+      { error: 'Failed to create eSIM' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\esims\[id]\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Fetch eSIM by ID
+    const esim = await prisma.eSim.findUnique({
+      where: { id },
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            status: true,
+            totalAmount: true,
+            createdAt: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+              },
+            },
+          },
+        },
+        bundle: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            dataAmount: true,
+            dataUnit: true,
+            duration: true,
+            price: true,
+          },
+        },
+      },
+    });
+
+    if (!esim) {
+      return NextResponse.json(
+        { error: 'eSIM not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ esim });
+  } catch (error) {
+    console.error('Error fetching eSIM:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch eSIM' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      iccid, 
+      status, 
+      activationDate, 
+      expiryDate,
+      dataUsed,
+      notes,
+      orderId,
+      bundleId
+    } = body;
+
+    // Check if eSIM exists
+    const existingESim = await prisma.eSim.findUnique({
+      where: { id },
+    });
+
+    if (!existingESim) {
+      return NextResponse.json(
+        { error: 'eSIM not found' },
+        { status: 404 }
+      );
+    }
+
+    // If ICCID is being changed, check if new ICCID already exists
+    if (iccid && iccid !== existingESim.iccid) {
+      const iccidExists = await prisma.eSim.findFirst({
+        where: { 
+          iccid,
+          id: { not: id }
+        },
+      });
+
+      if (iccidExists) {
+        return NextResponse.json(
+          { error: 'eSIM with this ICCID already exists' },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Check if bundle exists (if provided)
+    if (bundleId) {
+      const bundle = await prisma.bundle.findUnique({
+        where: { id: bundleId },
+      });
+
+      if (!bundle) {
+        return NextResponse.json(
+          { error: 'Bundle not found' },
+          { status: 404 }
+        );
+      }
+    }
+
+    // Check if order exists (if provided)
+    if (orderId) {
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+      });
+
+      if (!order) {
+        return NextResponse.json(
+          { error: 'Order not found' },
+          { status: 404 }
+        );
+      }
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    if (iccid !== undefined) updateData.iccid = iccid;
+    if (status !== undefined) updateData.status = status;
+    if (activationDate !== undefined) updateData.activationDate = activationDate ? new Date(activationDate) : null;
+    if (expiryDate !== undefined) updateData.expiryDate = expiryDate ? new Date(expiryDate) : null;
+    if (dataUsed !== undefined) updateData.dataUsed = parseFloat(dataUsed);
+    if (notes !== undefined) updateData.notes = notes;
+    if (orderId !== undefined) updateData.orderId = orderId;
+    if (bundleId !== undefined) updateData.bundleId = bundleId;
+
+    // Update eSIM
+    const updatedESim = await prisma.eSim.update({
+      where: { id },
+      data: updateData,
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+          },
+        },
+        bundle: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'UPDATE',
+        resourceType: 'ESIM',
+        resourceId: id,
+        details: `Admin updated eSIM: ${updatedESim.iccid}, status: ${status || 'unchanged'}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ esim: updatedESim });
+  } catch (error) {
+    console.error('Error updating eSIM:', error);
+    return NextResponse.json(
+      { error: 'Failed to update eSIM' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Check if eSIM exists
+    const existingESim = await prisma.eSim.findUnique({
+      where: { id },
+      select: { 
+        iccid: true,
+        status: true,
+        orderId: true
+      },
+    });
+
+    if (!existingESim) {
+      return NextResponse.json(
+        { error: 'eSIM not found' },
+        { status: 404 }
+      );
+    }
+
+    // Check if eSIM is associated with an order
+    if (existingESim.orderId) {
+      return NextResponse.json(
+        { error: 'Cannot delete eSIM as it is associated with an order' },
+        { status: 400 }
+      );
+    }
+
+    // Check if eSIM is active
+    if (existingESim.status === 'ACTIVE') {
+      return NextResponse.json(
+        { error: 'Cannot delete active eSIM. Please deactivate it first.' },
+        { status: 400 }
+      );
+    }
+
+    // Delete eSIM
+    await prisma.eSim.delete({
+      where: { id },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'DELETE',
+        resourceType: 'ESIM',
+        resourceId: id,
+        details: `Admin deleted eSIM: ${existingESim.iccid}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting eSIM:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete eSIM' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\orders\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse query parameters
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const search = searchParams.get('search') || '';
+    const status = searchParams.get('status') || '';
+    
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+
+    // Build search conditions
+    let whereCondition: any = {};
+    if (search) {
+      whereCondition = {
+        OR: [
+          { id: { contains: search } },
+          { user: { email: { contains: search, mode: 'insensitive' } } },
+          { orderNumber: { contains: search } },
+        ],
+      };
+    }
+
+    if (status) {
+      whereCondition.status = status;
+    }
+
+    // Fetch orders with pagination
+    const [orders, totalOrders] = await Promise.all([
+      prisma.order.findMany({
+        where: whereCondition,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          orderItems: {
+            include: {
+              bundle: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.order.count({ where: whereCondition }),
+    ]);
+
+    // Calculate total pages
+    const totalPages = Math.ceil(totalOrders / limit);
+
+    return NextResponse.json({
+      orders,
+      pagination: {
+        total: totalOrders,
+        pages: totalPages,
+        page,
+        limit,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch orders' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { userId, items, status, paymentMethod, shippingAddress } = body;
+
+    // Validate required fields
+    if (!userId || !items || items.length === 0) {
+      return NextResponse.json(
+        { error: 'User ID and at least one item are required' },
+        { status: 400 }
+      );
+    }
+
+    // Check if user exists
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    // Calculate order total
+    let totalAmount = 0;
+    const orderItems = [];
+
+    for (const item of items) {
+      const bundle = await prisma.bundle.findUnique({
+        where: { id: item.bundleId },
+      });
+
+      if (!bundle) {
+        return NextResponse.json(
+          { error: `Bundle with ID ${item.bundleId} not found` },
+          { status: 404 }
+        );
+      }
+
+      const itemTotal = bundle.price * (item.quantity || 1);
+      totalAmount += itemTotal;
+
+      orderItems.push({
+        bundleId: bundle.id,
+        quantity: item.quantity || 1,
+        price: bundle.price,
+        subtotal: itemTotal,
+      });
+    }
+
+    // Generate order number
+    const orderNumber = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    // Create new order
+    const newOrder = await prisma.order.create({
+      data: {
+        orderNumber,
+        userId,
+        status: status || 'PENDING',
+        totalAmount,
+        paymentMethod: paymentMethod || 'CREDIT_CARD',
+        shippingAddress,
+        orderItems: {
+          create: orderItems,
+        },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        orderItems: {
+          include: {
+            bundle: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'CREATE',
+        resourceType: 'ORDER',
+        resourceId: newOrder.id,
+        details: `Admin created new order: ${orderNumber} for user ${user.email}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ order: newOrder }, { status: 201 });
+  } catch (error) {
+    console.error('Error creating order:', error);
+    return NextResponse.json(
+      { error: 'Failed to create order' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\orders\[id]\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Fetch order by ID
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+          },
+        },
+        orderItems: {
+          include: {
+            bundle: {
+              select: {
+                id: true,
+                name: true,
+                description: true,
+                price: true,
+                dataAmount: true,
+                dataUnit: true,
+                duration: true,
+              },
+            },
+          },
+        },
+        esims: {
+          select: {
+            id: true,
+            iccid: true,
+            status: true,
+            activationDate: true,
+            expiryDate: true,
+          },
+        },
+        transactions: {
+          select: {
+            id: true,
+            amount: true,
+            status: true,
+            paymentMethod: true,
+            transactionId: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      return NextResponse.json(
+        { error: 'Order not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ order });
+  } catch (error) {
+    console.error('Error fetching order:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch order' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { status, paymentStatus, notes } = body;
+
+    // Check if order exists
+    const existingOrder = await prisma.order.findUnique({
+      where: { id },
+      select: { orderNumber: true },
+    });
+
+    if (!existingOrder) {
+      return NextResponse.json(
+        { error: 'Order not found' },
+        { status: 404 }
+      );
+    }
+
+    // Update order
+    const updatedOrder = await prisma.order.update({
+      where: { id },
+      data: {
+        ...(status && { status }),
+        ...(paymentStatus && { paymentStatus }),
+        ...(notes && { notes }),
+        updatedAt: new Date(),
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'UPDATE',
+        resourceType: 'ORDER',
+        resourceId: id,
+        details: `Admin updated order: ${existingOrder.orderNumber}, status: ${status || 'unchanged'}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ order: updatedOrder });
+  } catch (error) {
+    console.error('Error updating order:', error);
+    return NextResponse.json(
+      { error: 'Failed to update order' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Check if order exists
+    const existingOrder = await prisma.order.findUnique({
+      where: { id },
+      select: { orderNumber: true },
+    });
+
+    if (!existingOrder) {
+      return NextResponse.json(
+        { error: 'Order not found' },
+        { status: 404 }
+      );
+    }
+
+    // Delete order (in a real application, you might want to soft delete instead)
+    await prisma.order.delete({
+      where: { id },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'DELETE',
+        resourceType: 'ORDER',
+        resourceId: id,
+        details: `Admin deleted order: ${existingOrder.orderNumber}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting order:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete order' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\promote-user\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function POST(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { userId } = body;
+
+    // Validate required fields
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'User ID is required' },
+        { status: 400 }
+      );
+    }
+
+    // Check if user exists
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    // Promote user to admin
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        isAdmin: true,
+        role: 'ADMIN',
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        isAdmin: true,
+        role: true,
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'UPDATE',
+        resourceType: 'USER',
+        resourceId: userId,
+        details: `Admin promoted user ${updatedUser.email} to admin role`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ 
+      success: true, 
+      user: updatedUser 
+    });
+  } catch (error) {
+    console.error('Error promoting user to admin:', error);
+    return NextResponse.json(
+      { error: 'Failed to promote user to admin' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\seed\route.ts ---
+// src/app/api/admin/seed/route.ts
+
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import bcrypt from 'bcryptjs';
+
+export async function POST(req: NextRequest) {
+  try {
+    // Check if we're in development mode
+    if (process.env.NODE_ENV !== 'development') {
+      return NextResponse.json(
+        { error: 'This endpoint is only available in development mode.' },
+        { status: 403 }
+      );
+    }
+
+    // Check if admin already exists
+    const existingAdmin = await prisma.admin.findFirst();
+    if (existingAdmin) {
+      return NextResponse.json(
+        { message: 'Admin user already exists.' },
+        { status: 200 }
+      );
+    }
+
+    // Create admin user
+    const hashedPassword = await bcrypt.hash('admin123', 10);
+    const admin = await prisma.admin.create({
+      data: {
+        name: 'Admin User',
+        email: 'admin@example.com',
+        password: hashedPassword,
+      },
+    });
+
+    // Remove password from response
+    const { password, ...safeAdmin } = admin;
+
+    return NextResponse.json(
+      { 
+        message: 'Admin user created successfully.', 
+        admin: safeAdmin,
+        credentials: {
+          email: 'admin@example.com',
+          password: 'admin123'
+        }
+      },
+      { status: 201 }
+    );
+  } catch (error: any) {
+    console.error('Error seeding admin user:', error);
+    return NextResponse.json(
+      { error: 'Internal server error.' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\settings\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Fetch settings
+    const settings = await prisma.setting.findMany();
+
+    // Convert array to object with key-value pairs
+    const settingsObject = settings.reduce((acc, setting) => {
+      acc[setting.key] = setting.value;
+      return acc;
+    }, {} as Record<string, string>);
+
+    return NextResponse.json({ settings: settingsObject });
+  } catch (error) {
+    console.error('Error fetching settings:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch settings' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { settings } = body;
+
+    if (!settings || typeof settings !== 'object') {
+      return NextResponse.json(
+        { error: 'Settings object is required' },
+        { status: 400 }
+      );
+    }
+
+    // Update settings
+    const updatedSettings = [];
+    for (const [key, value] of Object.entries(settings)) {
+      // Check if setting exists
+      const existingSetting = await prisma.setting.findUnique({
+        where: { key },
+      });
+
+      if (existingSetting) {
+        // Update existing setting
+        const updated = await prisma.setting.update({
+          where: { key },
+          data: { value: String(value) },
+        });
+        updatedSettings.push(updated);
+      } else {
+        // Create new setting
+        const created = await prisma.setting.create({
+          data: {
+            key,
+            value: String(value),
+          },
+        });
+        updatedSettings.push(created);
+      }
+    }
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'UPDATE',
+        resourceType: 'SETTINGS',
+        resourceId: 'global',
+        details: `Admin updated system settings: ${Object.keys(settings).join(', ')}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ 
+      success: true,
+      settings: updatedSettings.reduce((acc, setting) => {
+        acc[setting.key] = setting.value;
+        return acc;
+      }, {} as Record<string, string>)
+    });
+  } catch (error) {
+    console.error('Error updating settings:', error);
+    return NextResponse.json(
+      { error: 'Failed to update settings' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\users\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse query parameters
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const search = searchParams.get('search') || '';
+    
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+
+    // Build search conditions
+    let whereCondition = {};
+    if (search) {
+      whereCondition = {
+        OR: [
+          { email: { contains: search, mode: 'insensitive' } },
+          { name: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    // Fetch users with pagination
+    const [users, totalUsers] = await Promise.all([
+      prisma.user.findMany({
+        where: whereCondition,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+          isAdmin: true,
+          role: true,
+          createdAt: true,
+          updatedAt: true,
+          // Exclude sensitive fields like password
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.user.count({ where: whereCondition }),
+    ]);
+
+    // Calculate total pages
+    const totalPages = Math.ceil(totalUsers / limit);
+
+    return NextResponse.json({
+      users,
+      pagination: {
+        total: totalUsers,
+        pages: totalPages,
+        page,
+        limit,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch users' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { name, email, password, role, isAdmin } = body;
+
+    // Validate required fields
+    if (!name || !email || !password) {
+      return NextResponse.json(
+        { error: 'Name, email, and password are required' },
+        { status: 400 }
+      );
+    }
+
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      return NextResponse.json(
+        { error: 'User with this email already exists' },
+        { status: 409 }
+      );
+    }
+
+    // Create new user
+    const newUser = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password, // In a real app, this should be hashed
+        role: role || 'USER',
+        isAdmin: isAdmin || false,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        isAdmin: true,
+        createdAt: true,
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'CREATE',
+        resourceType: 'USER',
+        resourceId: newUser.id.toString(),
+        details: `Admin created new user: ${newUser.email}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ user: newUser }, { status: 201 });
+  } catch (error) {
+    console.error('Error creating user:', error);
+    return NextResponse.json(
+      { error: 'Failed to create user' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\users\[id]\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Fetch user by ID
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        isAdmin: true,
+        role: true,
+        createdAt: true,
+        updatedAt: true,
+        // Include related data that might be useful for admin
+        orders: {
+          select: {
+            id: true,
+            status: true,
+            totalAmount: true,
+            createdAt: true,
+          },
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+        },
+        // Add other relevant relations
+      },
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ user });
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch user' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { name, email, role, isAdmin } = body;
+
+    // Check if user exists
+    const existingUser = await prisma.user.findUnique({
+      where: { id },
+    });
+
+    if (!existingUser) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    // Update user
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: {
+        ...(name && { name }),
+        ...(email && { email }),
+        ...(role && { role }),
+        ...(isAdmin !== undefined && { isAdmin }),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        isAdmin: true,
+        updatedAt: true,
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'UPDATE',
+        resourceType: 'USER',
+        resourceId: id,
+        details: `Admin updated user: ${updatedUser.email}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ user: updatedUser });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    return NextResponse.json(
+      { error: 'Failed to update user' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Check if user exists
+    const existingUser = await prisma.user.findUnique({
+      where: { id },
+      select: { email: true },
+    });
+
+    if (!existingUser) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    // Delete user
+    await prisma.user.delete({
+      where: { id },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'DELETE',
+        resourceType: 'USER',
+        resourceId: id,
+        details: `Admin deleted user: ${existingUser.email}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete user' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\withdrawals\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse query parameters
+    const searchParams = request.nextUrl.searchParams;
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const search = searchParams.get('search') || '';
+    const status = searchParams.get('status') || '';
+    
+    // Calculate pagination
+    const skip = (page - 1) * limit;
+
+    // Build search conditions
+    let whereCondition: any = {};
+    if (search) {
+      whereCondition = {
+        OR: [
+          { user: { email: { contains: search, mode: 'insensitive' } } },
+          { user: { name: { contains: search, mode: 'insensitive' } } },
+          { reference: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    if (status) {
+      whereCondition.status = status;
+    }
+
+    // Fetch withdrawals with pagination
+    const [withdrawals, totalWithdrawals] = await Promise.all([
+      prisma.withdrawal.findMany({
+        where: whereCondition,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.withdrawal.count({ where: whereCondition }),
+    ]);
+
+    // Calculate total pages
+    const totalPages = Math.ceil(totalWithdrawals / limit);
+
+    return NextResponse.json({
+      withdrawals,
+      pagination: {
+        total: totalWithdrawals,
+        pages: totalPages,
+        page,
+        limit,
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching withdrawals:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch withdrawals' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      userId, 
+      amount, 
+      paymentMethod, 
+      accountDetails, 
+      status, 
+      notes 
+    } = body;
+
+    // Validate required fields
+    if (!userId || !amount || !paymentMethod) {
+      return NextResponse.json(
+        { error: 'User ID, amount, and payment method are required' },
+        { status: 400 }
+      );
+    }
+
+    // Check if user exists
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      );
+    }
+
+    // Generate reference number
+    const reference = `WD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    // Create new withdrawal
+    const newWithdrawal = await prisma.withdrawal.create({
+      data: {
+        userId,
+        amount: parseFloat(amount),
+        paymentMethod,
+        accountDetails,
+        status: status || 'PENDING',
+        notes,
+        reference,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'CREATE',
+        resourceType: 'WITHDRAWAL',
+        resourceId: newWithdrawal.id,
+        details: `Admin created new withdrawal: ${reference} for user ${user.email}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ withdrawal: newWithdrawal }, { status: 201 });
+  } catch (error) {
+    console.error('Error creating withdrawal:', error);
+    return NextResponse.json(
+      { error: 'Failed to create withdrawal' },
+      { status: 500 }
+    );
+  }
+}
+
+
+--- C:\Users\hanos\esima\src\app\api\admin\withdrawals\[id]\route.ts ---
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { verifyAuth } from '@/utils/adminAuth';
+
+const prisma = new PrismaClient();
+
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Fetch withdrawal by ID
+    const withdrawal = await prisma.withdrawal.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    if (!withdrawal) {
+      return NextResponse.json(
+        { error: 'Withdrawal not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ withdrawal });
+  } catch (error) {
+    console.error('Error fetching withdrawal:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch withdrawal' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { 
+      status, 
+      paymentMethod, 
+      accountDetails, 
+      notes,
+      transactionId,
+      processedAt
+    } = body;
+
+    // Check if withdrawal exists
+    const existingWithdrawal = await prisma.withdrawal.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!existingWithdrawal) {
+      return NextResponse.json(
+        { error: 'Withdrawal not found' },
+        { status: 404 }
+      );
+    }
+
+    // Prepare update data
+    const updateData: any = {};
+    if (status !== undefined) updateData.status = status;
+    if (paymentMethod !== undefined) updateData.paymentMethod = paymentMethod;
+    if (accountDetails !== undefined) updateData.accountDetails = accountDetails;
+    if (notes !== undefined) updateData.notes = notes;
+    if (transactionId !== undefined) updateData.transactionId = transactionId;
+    
+    // If status is changing to COMPLETED, set processedAt date
+    if (status === 'COMPLETED' && existingWithdrawal.status !== 'COMPLETED') {
+      updateData.processedAt = new Date();
+    } else if (processedAt !== undefined) {
+      updateData.processedAt = processedAt ? new Date(processedAt) : null;
+    }
+
+    // Update withdrawal
+    const updatedWithdrawal = await prisma.withdrawal.update({
+      where: { id },
+      data: updateData,
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'UPDATE',
+        resourceType: 'WITHDRAWAL',
+        resourceId: id,
+        details: `Admin updated withdrawal: ${existingWithdrawal.reference}, status: ${status || 'unchanged'} for user ${existingWithdrawal.user.email}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ withdrawal: updatedWithdrawal });
+  } catch (error) {
+    console.error('Error updating withdrawal:', error);
+    return NextResponse.json(
+      { error: 'Failed to update withdrawal' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { id } = params;
+    
+    // Verify admin authentication
+    const authResult = await verifyAuth(request);
+    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+      return NextResponse.json(
+        { error: 'Unauthorized access' },
+        { status: 401 }
+      );
+    }
+
+    // Check if withdrawal exists
+    const existingWithdrawal = await prisma.withdrawal.findUnique({
+      where: { id },
+      select: { 
+        reference: true,
+        status: true,
+        userId: true,
+        user: {
+          select: {
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!existingWithdrawal) {
+      return NextResponse.json(
+        { error: 'Withdrawal not found' },
+        { status: 404 }
+      );
+    }
+
+    // Check if withdrawal is already processed
+    if (existingWithdrawal.status === 'COMPLETED') {
+      return NextResponse.json(
+        { error: 'Cannot delete a completed withdrawal' },
+        { status: 400 }
+      );
+    }
+
+    // Delete withdrawal
+    await prisma.withdrawal.delete({
+      where: { id },
+    });
+
+    // Log the action
+    await prisma.auditLog.create({
+      data: {
+        userId: authResult.user?.id,
+        action: 'DELETE',
+        resourceType: 'WITHDRAWAL',
+        resourceId: id,
+        details: `Admin deleted withdrawal: ${existingWithdrawal.reference} for user ${existingWithdrawal.user.email}`,
+        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
+      },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting withdrawal:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete withdrawal' },
+      { status: 500 }
+    );
+  }
+}
+
+

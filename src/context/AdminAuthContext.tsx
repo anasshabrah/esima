@@ -1,95 +1,102 @@
+// src/context/AdminAuthContext.tsx
+
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
 interface AdminAuthContextType {
-  isAdmin: boolean;
+  isAuthenticated: boolean;
   isLoading: boolean;
-  user: any | null;
-  checkAdminStatus: () => Promise<boolean>;
+  admin: any | null;
+  login: (adminData: any, token: string) => void;
   logout: () => void;
+  checkAuthStatus: () => Promise<boolean>;
 }
 
 const AdminAuthContext = createContext<AdminAuthContextType>({
-  isAdmin: false,
+  isAuthenticated: false,
   isLoading: true,
-  user: null,
-  checkAdminStatus: async () => false,
+  admin: null,
+  login: () => {},
   logout: () => {},
+  checkAuthStatus: async () => false,
 });
 
 export const useAdminAuth = () => useContext(AdminAuthContext);
 
 export const AdminAuthProvider = ({ children }: { children: React.ReactNode }) => {
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [user, setUser] = useState<any | null>(null);
+  const [admin, setAdmin] = useState<any | null>(null);
 
-  const checkAdminStatus = async () => {
+  const login = (adminData: any, token: string) => {
+    localStorage.setItem('adminToken', token);
+    setAdmin(adminData);
+    setIsAuthenticated(true);
+  };
+
+  const logout = () => {
+    localStorage.removeItem('adminToken');
+    setAdmin(null);
+    setIsAuthenticated(false);
+    window.location.href = '/admin/signin';
+  };
+
+  const checkAuthStatus = async () => {
     setIsLoading(true);
     try {
-      // Get token from localStorage - check both possible token keys
-      const token = localStorage.getItem('token') || localStorage.getItem('authToken');
+      const token = localStorage.getItem('adminToken');
       
       if (!token) {
-        setIsAdmin(false);
-        setUser(null);
+        setIsAuthenticated(false);
+        setAdmin(null);
         setIsLoading(false);
         return false;
       }
       
-      // Call the /api/auth/me endpoint with the token
-      const response = await fetch('/api/auth/me', {
+      const response = await fetch('/api/admin/auth/me', {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
       
       if (!response.ok) {
-        setIsAdmin(false);
-        setUser(null);
+        setIsAuthenticated(false);
+        setAdmin(null);
         setIsLoading(false);
         return false;
       }
       
-      const userData = await response.json();
+      const adminData = await response.json();
       
-      // Check if user has admin role
-      if (userData && userData.isAdmin) {
-        setIsAdmin(true);
-        setUser(userData);
-        setIsLoading(false);
-        return true;
-      } else {
-        setIsAdmin(false);
-        setUser(userData);
-        setIsLoading(false);
-        return false;
-      }
+      setIsAuthenticated(true);
+      setAdmin(adminData);
+      setIsLoading(false);
+      return true;
     } catch (error) {
-      console.error('Error checking admin status:', error);
-      setIsAdmin(false);
-      setUser(null);
+      console.error('Error checking admin authentication status:', error);
+      setIsAuthenticated(false);
+      setAdmin(null);
       setIsLoading(false);
       return false;
     }
   };
 
-  const logout = () => {
-    // Remove both possible token keys for consistency
-    localStorage.removeItem('token');
-    localStorage.removeItem('authToken');
-    setIsAdmin(false);
-    setUser(null);
-    window.location.href = '/signin';
-  };
-
   useEffect(() => {
-    checkAdminStatus();
+    checkAuthStatus();
   }, []);
 
   return (
-    <AdminAuthContext.Provider value={{ isAdmin, isLoading, user, checkAdminStatus, logout }}>
+    <AdminAuthContext.Provider 
+      value={{ 
+        isAuthenticated, 
+        isLoading, 
+        admin, 
+        login, 
+        logout, 
+        checkAuthStatus 
+      }}
+    >
       {children}
     </AdminAuthContext.Provider>
   );
