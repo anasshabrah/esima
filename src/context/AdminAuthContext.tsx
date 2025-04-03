@@ -28,8 +28,8 @@ export const AdminAuthProvider = ({ children }: { children: React.ReactNode }) =
   const checkAdminStatus = async () => {
     setIsLoading(true);
     try {
-      // Get token from localStorage
-      const token = localStorage.getItem('authToken');
+      // Get token from localStorage - check both possible token keys
+      const token = localStorage.getItem('token') || localStorage.getItem('authToken');
       
       if (!token) {
         setIsAdmin(false);
@@ -55,14 +55,14 @@ export const AdminAuthProvider = ({ children }: { children: React.ReactNode }) =
       const userData = await response.json();
       
       // Check if user has admin role
-      if (userData.user && userData.user.isAdmin) {
+      if (userData && userData.isAdmin) {
         setIsAdmin(true);
-        setUser(userData.user);
+        setUser(userData);
         setIsLoading(false);
         return true;
       } else {
         setIsAdmin(false);
-        setUser(userData.user);
+        setUser(userData);
         setIsLoading(false);
         return false;
       }
@@ -76,6 +76,8 @@ export const AdminAuthProvider = ({ children }: { children: React.ReactNode }) =
   };
 
   const logout = () => {
+    // Remove both possible token keys for consistency
+    localStorage.removeItem('token');
     localStorage.removeItem('authToken');
     setIsAdmin(false);
     setUser(null);

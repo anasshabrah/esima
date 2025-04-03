@@ -18,14 +18,39 @@ export async function verifyAdminAccess(request: Request) {
     // Verify the token and get the payload
     const payload = verifyAuthToken(token);
 
-    if (!payload || !payload.userId) {
+    if (!payload) {
       return { isAuthorized: false, error: 'Unauthorized: Invalid token' };
     }
 
-    // Get the user from the database using the provided userId
-    const user = await prisma.user.findUnique({
-      where: { id: parseInt(payload.userId) },
+    // Check for either userId or referralUserId in the payload
+    const userId = payload.userId || payload.referralUserId;
+    
+    if (!userId) {
+      return { isAuthorized: false, error: 'Unauthorized: Invalid token payload' };
+    }
+
+    // First try to find the user in the User table
+    let user = await prisma.user.findUnique({
+      where: { id: Number(userId) },
     });
+
+    // If not found in User table, try the referralUser table
+    if (!user) {
+      const referralUser = await prisma.referralUser.findUnique({
+        where: { id: Number(userId) },
+      });
+
+      // If found in referralUser table and has admin privileges, create a compatible user object
+      if (referralUser && referralUser.isAdmin) {
+        user = {
+          id: referralUser.id,
+          email: referralUser.email,
+          name: referralUser.name,
+          isAdmin: referralUser.isAdmin,
+          // Add any other required fields
+        };
+      }
+    }
 
     if (!user) {
       return { isAuthorized: false, error: 'Unauthorized: User not found' };

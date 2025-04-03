@@ -4,13 +4,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import jwt from 'jsonwebtoken';
 import { Prisma } from '@prisma/client';
+import { verifyAuthToken } from '@/utils/auth';
 
 /**
  * Interface representing the decoded JWT token.
- * Ensure that the token payload includes a `userId` field.
  */
 interface DecodedToken {
-  userId: number;
+  userId?: number;
+  referralUserId?: number;
+  isReferralUser?: boolean;
   // Add other fields if necessary
 }
 
@@ -63,84 +65,73 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 3. Verify the token using JWT_SECRET
-    const JWT_SECRET = process.env.JWT_SECRET;
-    if (!JWT_SECRET) {
-      console.error('JWT_SECRET is not defined in environment variables.');
-      return NextResponse.json(
-        { error: 'Internal server error.' },
-        { status: 500 }
-      );
-    }
-
-    let decodedToken: DecodedToken;
-    try {
-      decodedToken = jwt.verify(token, JWT_SECRET) as DecodedToken;
-    } catch (err) {
-      console.error('JWT verification failed:', err);
+    // 3. Verify the token using our utility function
+    const decodedToken = verifyAuthToken(token);
+    if (!decodedToken) {
       return NextResponse.json(
         { error: 'Unauthorized: Invalid token.' },
         { status: 401 }
       );
     }
 
-    // 4. Extract userId from the decoded token
-    const { userId } = decodedToken;
-    if (!userId) {
+    // 4. Extract userId or referralUserId from the decoded token
+    const userId = decodedToken.userId;
+    const referralUserId = decodedToken.referralUserId;
+    const isReferralUser = decodedToken.isReferralUser;
+
+    if (!userId && !referralUserId) {
       return NextResponse.json(
         { error: 'Unauthorized: Invalid token payload.' },
         { status: 401 }
       );
     }
 
-    // 5. Define the Prisma query to fetch user with referrer
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        phone: true,
-        country: true,
-        createdAt: true,
-        currencyCode: true,
-        currencySymbol: true,
-        exchangeRate: true,
-        language: true,
-        referrerId: true,
-        referrer: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            referralLink: true,
-          },
+    let user = null;
+
+    // 5. Fetch the appropriate user based on the token payload
+    if (isReferralUser && referralUserId) {
+      // Fetch referral user
+      user = await prisma.referralUser.findUnique({
+        where: { id: referralUserId },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          isAdmin: true,
+          createdAt: true,
+          // Add other fields as needed
         },
-        // Exclude sensitive fields like password, token, ip, etc.
-      },
-    }) as Prisma.UserGetPayload<{
-      select: {
-        id: true;
-        email: true;
-        name: true;
-        phone: true;
-        country: true;
-        createdAt: true;
-        currencyCode: true;
-        currencySymbol: true;
-        exchangeRate: true;
-        language: true;
-        referrerId: true;
-        referrer: {
-          select: {
-            id: true;
-            name: true;
-            email: true;
-            referralLink: true;
-          };
-        };
-      };
-    }> | null;
+      });
+    } else if (userId) {
+      // Fetch regular user
+      user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          phone: true,
+          country: true,
+          createdAt: true,
+          currencyCode: true,
+          currencySymbol: true,
+          exchangeRate: true,
+          language: true,
+          referrerId: true,
+          isAdmin: true,
+          role: true,
+          referrer: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              referralLink: true,
+            },
+          },
+          // Exclude sensitive fields like password, token, ip, etc.
+        },
+      });
+    }
 
     // 6. Handle case where user is not found
     if (!user) {

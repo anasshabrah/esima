@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import { generateAuthToken } from '@/utils/auth';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,8 +16,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Find the referral user
-    const user = await prisma.referralUser.findUnique({ where: { email } });
+    // First try to find the user in the User table
+    let user = await prisma.user.findUnique({ where: { email } });
+    let isReferralUser = false;
+
+    // If not found in User table, try the referralUser table
+    if (!user) {
+      const referralUser = await prisma.referralUser.findUnique({ where: { email } });
+      if (referralUser) {
+        user = referralUser;
+        isReferralUser = true;
+      }
+    }
 
     if (!user) {
       return NextResponse.json(
@@ -35,21 +45,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate JWT token
+    // Generate JWT token with the appropriate ID field
     if (!process.env.JWT_SECRET) {
       throw new Error('JWT_SECRET environment variable is not set');
     }
 
-    const token = jwt.sign(
-      { referralUserId: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const tokenPayload = isReferralUser 
+      ? { referralUserId: user.id, isReferralUser: true }
+      : { userId: user.id, isReferralUser: false };
+
+    const token = generateAuthToken(tokenPayload);
+    
+    if (!token) {
+      throw new Error('Failed to generate authentication token');
+    }
 
     // Exclude sensitive fields before sending the user object
     const { password: _, ...safeUser } = user;
 
-    return NextResponse.json({ user: safeUser, token }, { status: 200 });
+    // Add isAdmin flag to the response if it exists
+    const responseUser = {
+      ...safeUser,
+      isAdmin: user.isAdmin || false
+    };
+
+    return NextResponse.json({ user: responseUser, token }, { status: 200 });
   } catch (error: any) {
     console.error('Signin error:', error);
     return NextResponse.json({ error: 'Internal server error.' }, { status: 500 });
