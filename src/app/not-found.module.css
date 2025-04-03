@@ -1,0 +1,60 @@
+/* src/app/not-found.module.css */
+
+.container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 80vh;
+  padding: 2rem;
+  background-color: var(--background-light); /* Ensure this CSS variable is defined */
+}
+
+.content {
+  text-align: center;
+  max-width: 600px;
+}
+
+.image {
+  margin-bottom: 2rem;
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+.title {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: var(--primary); /* Ensure this CSS variable is defined */
+  margin-bottom: 1rem;
+}
+
+.description {
+  font-size: 1.2rem;
+  color: var(--foreground); /* Ensure this CSS variable is defined */
+  margin-bottom: 2rem;
+}
+
+.button {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  background-color: var(--highlight); /* Ensure this CSS variable is defined */
+  color: var(--white); /* Ensure this CSS variable is defined */
+  border-radius: 0.5rem;
+  text-decoration: none;
+  font-weight: 600;
+  transition: background-color 0.3s ease;
+}
+
+.button:hover {
+  background-color: var(--highlight-dark); /* Ensure this CSS variable is defined */
+}

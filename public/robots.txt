@@ -1,0 +1,18 @@
+# Robots.txt file for https://alodata.net
+
+User-agent: *
+# Disallow crawlers from accessing administrative or backend areas
+Disallow: /admin/
+Disallow: /login/
+Disallow: /register/
+Disallow: /account/
+Disallow: /cart/
+Disallow: /checkout/
+Disallow: /settings/
+Disallow: /user/
+
+# Allow all other pages to be crawled
+Allow: /
+
+# Specify the location of the sitemap
+Sitemap: https://alodata.net/sitemap.xml

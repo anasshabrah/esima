@@ -1,0 +1,119 @@
+/* globals.css */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #1f3b4d;
+  --highlight: #4b8bf4;
+  --accent: #2cb3a6;
+  --background-light: #f4f4f9;
+  --warning: #ffa726;
+  --neutral: #90a4ae;
+  --white: #ffffff;
+  --foreground: #171717;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  width: 100%;
+  overflow-x: hidden; /* Prevent horizontal scroll */
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background-light);
+  /* Removed any font-family settings to inherit from the parent */
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--primary);
+}
+
+/* RTL-specific adjustments */
+[dir="rtl"] {
+  text-align: right; /* Right align text */
+}
+
+/* Add additional RTL adjustments as needed */
+
+@layer utilities {
+  .bg-primary {
+    background-color: var(--primary);
+  }
+
+  .text-primary {
+    color: var(--primary);
+  }
+
+  .bg-highlight {
+    background-color: var(--highlight);
+  }
+
+  .text-highlight {
+    color: var(--highlight);
+  }
+
+  .bg-accent {
+    background-color: var(--accent);
+  }
+
+  .bg-light {
+    background-color: var(--background-light);
+  }
+
+  .text-warning {
+    color: var(--warning);
+  }
+
+  .bg-neutral {
+    background-color: var(--neutral);
+  }
+
+  .text-neutral {
+    color: var(--neutral);
+  }
+
+  .rounded-md {
+    border-radius: 0.375rem;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+.btn-primary {
+  @apply bg-primary text-white font-semibold py-2 px-4 rounded-md hover:bg-highlight;
+}
+
+.btn-secondary {
+  @apply bg-accent text-white font-semibold py-2 px-4 rounded-md hover:bg-highlight;
+}
+
+/* Optional: Adjust overlay opacity for better text readability */
+.overlay {
+  background-color: rgba(0, 0, 0, 0.4); /* Reduced opacity from 0.6 to 0.4 */
+}
+
+/* Ensure images and videos are responsive */
+img,
+video {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Prevent elements from causing overflow */
+*, *::before, *::after {
+  box-sizing: inherit;
+}

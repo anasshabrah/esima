@@ -1,0 +1,261 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             Int           @id @default(autoincrement())
+  email          String?       @unique
+  name           String?
+  phone          String?
+  country        String?
+  password       String?
+  token          String?       @unique
+  ip             String?
+  currencyCode   String        @default("USD")
+  currencySymbol String
+  exchangeRate   Float
+  language       String        @default("en")
+  createdAt      DateTime      @default(now())
+  orders         Order[]
+  otp            Otp?
+  referrerId     Int?
+  referrer       ReferralUser? @relation("ReferredUsers", fields: [referrerId], references: [id])
+  
+  // New admin fields
+  isAdmin        Boolean       @default(false)
+  role           String        @default("user") // "user" or "admin"
+  
+  // Inverse relations for the new models
+  auditLogs                AdminAuditLog[]    @relation("UserAuditLogs")
+  systemSettingsUpdated    SystemSettings[]   @relation("UserSystemSettings")
+  paymentSettingsUpdated   PaymentSettings[]  @relation("UserPaymentSettings")
+  
+  @@index([email])
+}
+
+model ReferralUser {
+  id               Int            @id @default(autoincrement())
+  name             String
+  email            String         @unique
+  phone            String
+  country          String
+  password         String
+  referralLink     String         @unique
+  couponCode       String         @unique
+  createdAt        DateTime       @default(now())
+  referredUsers    User[]         @relation("ReferredUsers")
+  passwordReset    PasswordReset? @relation("ReferralUserPasswordReset")
+  paypalEmail      String?
+  bankName         String?
+  swiftCode        String?
+  accountNumber    String?
+  iban             String?
+  abaRoutingNumber String?
+  transferCountry  String?
+  transferCity     String?
+  transferPhone    String?
+  recipientName    String?
+
+  // Relationship with Withdrawals
+  withdrawals Withdrawal[]
+
+  @@index([email])
+  @@index([referralLink])
+  @@index([couponCode])
+}
+
+model Withdrawal {
+  id             Int      @id @default(autoincrement())
+  referralUserId Int
+  amount         Float
+  paymentMethod  String
+  status         String   @default("Pending")
+  createdAt      DateTime @default(now())
+
+  referralUser ReferralUser @relation(fields: [referralUserId], references: [id])
+
+  @@index([referralUserId])
+}
+
+model PasswordReset {
+  id             Int          @id @default(autoincrement())
+  token          String       @unique
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  referralUser   ReferralUser @relation("ReferralUserPasswordReset", fields: [referralUserId], references: [id])
+  referralUserId Int          @unique
+
+  @@index([token])
+}
+
+model Order {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  amount            Float    // Selling price in local currency
+  purchasePrice     Float?   // Purchase price (cost incurred, in USD)
+  sellPrice         Float?   // Selling price converted to USD using exchangeRate
+  currency          String
+  paymentIntentId   String   @unique
+  quantity          Int
+  createdAt         DateTime @default(now())
+  bundleId          Int
+  countryId         Int
+  remainingQuantity Int
+  couponCode        String?
+  couponSponsor     String?
+  discountPercent   Int?
+  exchangeRate      Float
+
+  bundle  Bundle  @relation(fields: [bundleId], references: [id])
+  country Country @relation(fields: [countryId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+  esims   ESIM[]
+
+  @@index([userId])
+  @@index([bundleId])
+  @@index([countryId])
+}
+
+model Otp {
+  id     Int      @id @default(autoincrement())
+  otp    String
+  expiry DateTime
+  userId Int      @unique
+  user   User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Country {
+  id            Int      @id @default(autoincrement())
+  iso           String   @unique
+  name          String
+  region        String
+  networkBrands String[]
+  orders        Order[]
+  bundles       Bundle[]
+
+  @@index([iso])
+}
+
+model Bundle {
+  id             Int       @id @default(autoincrement())
+  name           String    @unique
+  friendlyName   String
+  description    String
+  dataAmount     Int
+  duration       Int
+  price          Float
+  autostart      Boolean
+  unlimited      Boolean
+  imageUrl       String
+  speed          String    @default("4G")
+  groups         String[]
+  orders         Order[]
+  countries      Country[]
+  roamingEnabled String[]  @default([])
+
+  @@index([name])
+}
+
+model Coupon {
+  id              Int       @id @default(autoincrement())
+  code            String    @unique
+  discountPercent Int
+  sponsor         String?
+  validFrom       DateTime?
+  validUntil      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model ESIM {
+  id             Int     @id @default(autoincrement())
+  iccid          String  @unique
+  smdpAddress    String
+  matchingId     String
+  activationCode String
+  status         String?
+  orderId        Int
+  order          Order   @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+}
+
+model Faq {
+  id         Int      @id @default(autoincrement())
+  question   String
+  answer     String
+  countryIso String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// New model for admin audit logging
+model AdminAuditLog {
+  id          Int       @id @default(autoincrement())
+  userId      Int?
+  user        User?     @relation(name: "UserAuditLogs", fields: [userId], references: [id])
+  action      String    // "create", "update", "delete", "login", etc.
+  entityType  String    // "user", "order", "bundle", etc.
+  entityId    String?   // ID of the affected entity
+  details     String?   // JSON string with details of the action
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType])
+  @@index([createdAt])
+}
+
+// New model for system settings
+model SystemSettings {
+  id                        Int       @id @default(autoincrement())
+  siteName                  String
+  siteDescription           String?
+  contactEmail              String
+  supportEmail              String
+  defaultCurrency           String    @default("USD")
+  referralCommissionPercent Float     @default(10)
+  maintenanceMode           Boolean   @default(false)
+  termsUrl                  String?
+  privacyUrl                String?
+  updatedAt                 DateTime  @updatedAt
+  updatedById               Int?
+  updatedBy                 User?     @relation(name: "UserSystemSettings", fields: [updatedById], references: [id])
+
+  @@index([updatedById])
+}
+
+// New model for payment settings
+model PaymentSettings {
+  id                      Int       @id @default(autoincrement())
+  minimumWithdrawalAmount Float     @default(50)
+  updatedAt               DateTime  @updatedAt
+  updatedById             Int?
+  updatedBy               User?     @relation(name: "UserPaymentSettings", fields: [updatedById], references: [id])
+  paymentMethods          PaymentMethod[]
+
+  @@index([updatedById])
+}
+
+model PaymentMethod {
+  id                Int             @id @default(autoincrement())
+  name              String
+  isEnabled         Boolean         @default(true)
+  processingFee     Float           @default(0)
+  instructions      String?
+  paymentSettingsId Int
+  paymentSettings   PaymentSettings @relation(fields: [paymentSettingsId], references: [id], onDelete: Cascade)
+
+  @@index([paymentSettingsId])
+}
