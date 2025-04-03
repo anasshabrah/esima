@@ -13,20 +13,21 @@ import {
   Trash2
 } from 'lucide-react';
 import { useAdminAuth } from '@/context/AdminAuthContext';
+import { AdminBundle, ErrorState, InputChangeEvent } from '@/types/admin';
 
 export default function BundlesPage() {
   const { user: adminUser } = useAdminAuth();
   const router = useRouter();
-  const [bundles, setBundles] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [bundleToDelete, setBundleToDelete] = useState(null);
+  const [bundles, setBundles] = useState<AdminBundle[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<ErrorState>(null);
+  const [page, setPage] = useState<number>(1);
+  const [limit, setLimit] = useState<number>(10);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [bundleToDelete, setBundleToDelete] = useState<AdminBundle | null>(null);
 
   useEffect(() => {
     fetchBundles();
@@ -69,7 +70,7 @@ export default function BundlesPage() {
     }
   };
 
-  const handleSearch = (e) => {
+  const handleSearch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setPage(1); // Reset to first page on new search
     fetchBundles();
@@ -79,7 +80,7 @@ export default function BundlesPage() {
     router.push('/admin/bundles/new');
   };
 
-  const handleEditBundle = (bundleId) => {
+  const handleEditBundle = (bundleId: number) => {
     router.push(`/admin/bundles/${bundleId}`);
   };
 
@@ -103,13 +104,13 @@ export default function BundlesPage() {
       setShowDeleteModal(false);
       setBundleToDelete(null);
       fetchBundles();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting bundle:', err);
       setError(err.message || 'Failed to delete bundle');
     }
   };
 
-  const formatCurrency = (amount, currency = 'USD') => {
+  const formatCurrency = (amount: number, currency = 'USD') => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: currency
@@ -141,7 +142,7 @@ export default function BundlesPage() {
                 className="block w-full p-2 pl-10 text-sm text-gray-900 border border-gray-300 rounded-lg bg-gray-50 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white"
                 placeholder="Search bundles by name"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e: InputChangeEvent) => setSearchTerm(e.target.value)}
               />
             </div>
           </form>

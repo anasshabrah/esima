@@ -12,13 +12,15 @@ import {
   XCircle
 } from 'lucide-react';
 import { useAdminAuth } from '@/context/AdminAuthContext';
+import { AdminBundle, BundleParams, Country, ErrorState, InputChangeEvent } from '@/types/admin';
 
-export default function BundleDetailsPage({ params }) {
+export default function BundleDetailsPage({ params }: { params: BundleParams }) {
   const { id } = params;
   const isNewBundle = id === 'new';
   const router = useRouter();
   const { user: adminUser } = useAdminAuth();
-  const [bundle, setBundle] = useState({
+  const [bundle, setBundle] = useState<AdminBundle>({
+    id: 0,
     name: '',
     description: '',
     dataAmount: 0,
@@ -28,12 +30,12 @@ export default function BundleDetailsPage({ params }) {
     isActive: true,
     roamingEnabled: false
   });
-  const [loading, setLoading] = useState(!isNewBundle);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const [countries, setCountries] = useState([]);
-  const [selectedCountries, setSelectedCountries] = useState([]);
-  const [availableCountries, setAvailableCountries] = useState([]);
+  const [loading, setLoading] = useState<boolean>(!isNewBundle);
+  const [saving, setSaving] = useState<boolean>(false);
+  const [error, setError] = useState<ErrorState>(null);
+  const [countries, setCountries] = useState<Country[]>([]);
+  const [selectedCountries, setSelectedCountries] = useState<Country[]>([]);
+  const [availableCountries, setAvailableCountries] = useState<Country[]>([]);
 
   useEffect(() => {
     if (!isNewBundle) {
@@ -106,7 +108,7 @@ export default function BundleDetailsPage({ params }) {
     }
   }, [countries, selectedCountries]);
 
-  const handleInputChange = (e) => {
+  const handleInputChange = (e: InputChangeEvent) => {
     const { name, value, type, checked } = e.target;
     setBundle({
       ...bundle,
@@ -114,7 +116,7 @@ export default function BundleDetailsPage({ params }) {
     });
   };
 
-  const handleNumberInputChange = (e) => {
+  const handleNumberInputChange = (e: InputChangeEvent) => {
     const { name, value } = e.target;
     setBundle({
       ...bundle,
@@ -122,18 +124,18 @@ export default function BundleDetailsPage({ params }) {
     });
   };
 
-  const handleAddCountry = (countryId) => {
+  const handleAddCountry = (countryId: string) => {
     const country = countries.find(c => c.id === parseInt(countryId));
     if (country) {
       setSelectedCountries([...selectedCountries, country]);
     }
   };
 
-  const handleRemoveCountry = (countryId) => {
+  const handleRemoveCountry = (countryId: number) => {
     setSelectedCountries(selectedCountries.filter(c => c.id !== countryId));
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
@@ -169,7 +171,7 @@ export default function BundleDetailsPage({ params }) {
 
       // Redirect to bundles list
       router.push('/admin/bundles');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving bundle:', err);
       setError(err.message || 'Failed to save bundle');
       setSaving(false);
@@ -377,8 +379,8 @@ export default function BundleDetailsPage({ params }) {
                 <button
                   type="button"
                   onClick={() => {
-                    const select = document.getElementById('addCountry');
-                    if (select.value) {
+                    const select = document.getElementById('addCountry') as HTMLSelectElement;
+                    if (select && select.value) {
                       handleAddCountry(select.value);
                       select.value = '';
                     }

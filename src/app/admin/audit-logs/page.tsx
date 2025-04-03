@@ -15,25 +15,26 @@ import {
   Filter
 } from 'lucide-react';
 import { useAdminAuth } from '@/context/AdminAuthContext';
+import { AuditLog, ErrorState, DateRange, InputChangeEvent } from '@/types/admin';
 
 export default function AuditLogsPage() {
   const { user: adminUser } = useAdminAuth();
   const router = useRouter();
-  const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(20);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [actionFilter, setActionFilter] = useState('all');
-  const [userFilter, setUserFilter] = useState('');
-  const [dateRange, setDateRange] = useState({
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<ErrorState>(null);
+  const [page, setPage] = useState<number>(1);
+  const [limit, setLimit] = useState<number>(20);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [actionFilter, setActionFilter] = useState<string>('all');
+  const [userFilter, setUserFilter] = useState<string>('');
+  const [dateRange, setDateRange] = useState<DateRange>({
     startDate: '',
     endDate: ''
   });
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState<boolean>(false);
 
   useEffect(() => {
     fetchAuditLogs();
@@ -92,7 +93,7 @@ export default function AuditLogsPage() {
     }
   };
 
-  const handleSearch = (e) => {
+  const handleSearch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setPage(1); // Reset to first page on new search
     fetchAuditLogs();
@@ -115,7 +116,7 @@ export default function AuditLogsPage() {
     fetchAuditLogs();
   };
 
-  const getActionBadgeClass = (action) => {
+  const getActionBadgeClass = (action: string | undefined) => {
     switch (action?.toUpperCase()) {
       case 'CREATE':
         return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
@@ -134,7 +135,8 @@ export default function AuditLogsPage() {
     }
   };
 
-  const formatDate = (dateString) => {
+  const formatDate = (dateString: string | undefined) => {
+    if (!dateString) return 'N/A';
     const date = new Date(dateString);
     return date.toLocaleString();
   };
@@ -164,7 +166,7 @@ export default function AuditLogsPage() {
                 className="block w-full p-2 pl-10 text-sm text-gray-900 border border-gray-300 rounded-lg bg-gray-50 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white"
                 placeholder="Search logs by action, user, or resource"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e: InputChangeEvent) => setSearchTerm(e.target.value)}
               />
             </div>
           </form>
@@ -189,7 +191,7 @@ export default function AuditLogsPage() {
                   id="actionFilter"
                   className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                   value={actionFilter}
-                  onChange={(e) => setActionFilter(e.target.value)}
+                  onChange={(e: InputChangeEvent) => setActionFilter(e.target.value)}
                 >
                   <option value="all">All Actions</option>
                   <option value="CREATE">Create</option>
@@ -209,7 +211,7 @@ export default function AuditLogsPage() {
                   id="userFilter"
                   className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                   value={userFilter}
-                  onChange={(e) => setUserFilter(e.target.value)}
+                  onChange={(e: InputChangeEvent) => setUserFilter(e.target.value)}
                   placeholder="Filter by user ID"
                 />
               </div>
@@ -222,7 +224,7 @@ export default function AuditLogsPage() {
                   id="startDate"
                   className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                   value={dateRange.startDate}
-                  onChange={(e) => setDateRange({...dateRange, startDate: e.target.value})}
+                  onChange={(e: InputChangeEvent) => setDateRange({...dateRange, startDate: e.target.value})}
                 />
               </div>
               <div>
@@ -234,7 +236,7 @@ export default function AuditLogsPage() {
                   id="endDate"
                   className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                   value={dateRange.endDate}
-                  onChange={(e) => setDateRange({...dateRange, endDate: e.target.value})}
+                  onChange={(e: InputChangeEvent) => setDateRange({...dateRange, endDate: e.target.value})}
                 />
               </div>
             </div>
