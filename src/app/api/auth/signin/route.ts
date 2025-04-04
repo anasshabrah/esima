@@ -16,17 +16,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // First try to find the user in the User table
-    let user = await prisma.user.findUnique({ where: { email } });
+    // Normalize the email to lowercase for a case-insensitive lookup
+    const normalizedEmail = email.toLowerCase();
+
+    // For partner (referral) login, check the ReferralUser table first
+    let user = await prisma.referralUser.findUnique({ where: { email: normalizedEmail } });
     let isReferralUser = false;
 
-    // If not found in User table, try the referralUser table
-    if (!user) {
-      const referralUser = await prisma.referralUser.findUnique({ where: { email } });
-      if (referralUser) {
-        user = referralUser;
-        isReferralUser = true;
-      }
+    if (user) {
+      isReferralUser = true;
+    } else {
+      // Otherwise, check the regular User table
+      user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     }
 
     if (!user) {
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check password
+    // Check password using bcrypt.compare (user.password is a hashed string)
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
       return NextResponse.json(
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
       throw new Error('Failed to generate authentication token');
     }
 
-    // Exclude sensitive fields before sending the user object
+    // Exclude sensitive fields (like password) before sending the user object
     const { password: _, ...safeUser } = user;
 
     // Add isAdmin flag to the response if it exists

@@ -1,7 +1,9 @@
+// src/app/admin/page.tsx
+
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Users, ShoppingCart, Package, ArrowUp, ArrowDown } from 'lucide-react';
+import { LayoutDashboard, Users, ShoppingCart, Package } from 'lucide-react';
 import KPICard from '@/components/admin/dashboard/KPICard';
 import FinancialChart from '@/components/admin/dashboard/FinancialChart';
 import SystemHealthMonitor from '@/components/admin/dashboard/SystemHealthMonitor';
@@ -17,7 +19,7 @@ export default function AdminDashboard() {
     pendingWithdrawals: 0,
     revenueChange: 0,
     ordersChange: 0,
-    usersChange: 0
+    usersChange: 0,
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -25,24 +27,28 @@ export default function AdminDashboard() {
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        const token = localStorage.getItem('authToken');
-        if (!token) return;
+        // Retrieve the admin token from localStorage.
+        const token = localStorage.getItem('adminToken');
+        if (!token) {
+          throw new Error('No admin token found');
+        }
 
         const response = await fetch('/api/admin/dashboard', {
           headers: {
-            'Authorization': `Bearer ${token}`
-          }
+            'Authorization': `Bearer ${token}`,
+          },
         });
 
         if (!response.ok) {
-          throw new Error('Failed to fetch dashboard data');
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to fetch dashboard data');
         }
 
         const data = await response.json();
         setStats(data);
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error fetching dashboard data:', err);
-        setError('Failed to load dashboard data. Please try again later.');
+        setError(err.message || 'Failed to load dashboard data. Please try again later.');
       } finally {
         setLoading(false);
       }
@@ -54,15 +60,18 @@ export default function AdminDashboard() {
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'USD'
+      currency: 'USD',
     }).format(amount);
   };
 
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]" role="status">
-          <span className="!absolute !-m-px !h-px !w-px !overflow-hidden !whitespace-nowrap !border-0 !p-0 ![clip:rect(0,0,0,0)]">Loading...</span>
+        <div
+          className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent"
+          role="status"
+        >
+          <span className="sr-only">Loading...</span>
         </div>
       </div>
     );
@@ -79,8 +88,12 @@ export default function AdminDashboard() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Welcome back, {user?.name || 'Admin'}</h1>
-        <p className="text-gray-500 dark:text-gray-400">Here's what's happening with your business today.</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+          Welcome back, {user?.name || 'Admin'}
+        </h1>
+        <p className="text-gray-500 dark:text-gray-400">
+          Here's what's happening with your business today.
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
@@ -120,13 +133,17 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         <div className="lg:col-span-2">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">Revenue Overview</h2>
+            <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+              Revenue Overview
+            </h2>
             <FinancialChart />
           </div>
         </div>
         <div>
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">System Health</h2>
+            <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
+              System Health
+            </h2>
             <SystemHealthMonitor />
           </div>
         </div>
@@ -135,20 +152,26 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-medium text-gray-900 dark:text-white">Recent Orders</h2>
-            <a href="/admin/orders" className="text-primary hover:text-primary-dark text-sm">View all</a>
+            <h2 className="text-lg font-medium text-gray-900 dark:text-white">
+              Recent Orders
+            </h2>
+            <a href="/admin/orders" className="text-primary hover:text-primary-dark text-sm">
+              View all
+            </a>
           </div>
-          {/* Placeholder for recent orders list */}
           <div className="space-y-4">
             <p className="text-gray-500 dark:text-gray-400">Loading recent orders...</p>
           </div>
         </div>
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-medium text-gray-900 dark:text-white">Pending Withdrawals</h2>
-            <a href="/admin/withdrawals" className="text-primary hover:text-primary-dark text-sm">View all</a>
+            <h2 className="text-lg font-medium text-gray-900 dark:text-white">
+              Pending Withdrawals
+            </h2>
+            <a href="/admin/withdrawals" className="text-primary hover:text-primary-dark text-sm">
+              View all
+            </a>
           </div>
-          {/* Placeholder for pending withdrawals */}
           <div className="space-y-4">
             <p className="text-gray-500 dark:text-gray-400">
               {stats.pendingWithdrawals > 0 

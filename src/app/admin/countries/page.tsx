@@ -1,3 +1,5 @@
+// src/app/admin/countries/page.tsx
+
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -7,7 +9,6 @@ import {
   Search, 
   ChevronLeft, 
   ChevronRight,
-  Eye,
   Plus,
   Edit,
   Trash2
@@ -35,7 +36,8 @@ export default function CountriesPage() {
   const fetchCountries = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('authToken');
+      // Use the adminToken here!
+      const token = localStorage.getItem('adminToken');
       if (!token) return;
 
       const queryParams = new URLSearchParams({
@@ -69,7 +71,7 @@ export default function CountriesPage() {
     }
   };
 
-  const handleSearch = (e) => {
+  const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setPage(1); // Reset to first page on new search
     fetchCountries();
@@ -79,13 +81,13 @@ export default function CountriesPage() {
     router.push('/admin/countries/new');
   };
 
-  const handleEditCountry = (countryId) => {
+  const handleEditCountry = (countryId: number) => {
     router.push(`/admin/countries/${countryId}`);
   };
 
   const handleDeleteCountry = async () => {
     try {
-      const token = localStorage.getItem('authToken');
+      const token = localStorage.getItem('adminToken');
       if (!token || !countryToDelete) return;
 
       const response = await fetch(`/api/admin/countries/${countryToDelete.id}`, {
@@ -103,9 +105,9 @@ export default function CountriesPage() {
       setShowDeleteModal(false);
       setCountryToDelete(null);
       fetchCountries();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting country:', err);
-      setError(err.message || 'Failed to delete country');
+      setError('Failed to delete country');
     }
   };
 
@@ -166,8 +168,8 @@ export default function CountriesPage() {
                 <tr>
                   <td colSpan={7} className="px-6 py-4 text-center">
                     <div className="flex justify-center">
-                      <div className="inline-block h-6 w-6 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]" role="status">
-                        <span className="!absolute !-m-px !h-px !w-px !overflow-hidden !whitespace-nowrap !border-0 !p-0 ![clip:rect(0,0,0,0)]">Loading...</span>
+                      <div className="inline-block h-6 w-6 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent" role="status">
+                        <span className="sr-only">Loading...</span>
                       </div>
                     </div>
                   </td>
@@ -186,7 +188,7 @@ export default function CountriesPage() {
                       {country.name}
                     </td>
                     <td className="px-6 py-4">
-                      {country.isoCode}
+                      {country.iso}
                     </td>
                     <td className="px-6 py-4">
                       {country.currencyCode || 'USD'}
@@ -237,11 +239,7 @@ export default function CountriesPage() {
             <button
               onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page === 1}
-              className={`p-2 rounded-lg ${
-                page === 1
-                  ? 'text-gray-400 cursor-not-allowed'
-                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
+              className={`p-2 rounded-lg ${page === 1 ? 'text-gray-400 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -251,11 +249,7 @@ export default function CountriesPage() {
             <button
               onClick={() => setPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
-              className={`p-2 rounded-lg ${
-                page === totalPages
-                  ? 'text-gray-400 cursor-not-allowed'
-                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
+              className={`p-2 rounded-lg ${page === totalPages ? 'text-gray-400 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
             >
               <ChevronRight className="w-5 h-5" />
             </button>

@@ -1,3 +1,7 @@
+// src/app/admin/esims/page.tsx
+
+'use client';
+
 'use client';
 
 import React, { useState, useEffect } from 'react';
@@ -8,107 +12,94 @@ import {
   ChevronLeft, 
   ChevronRight,
   Eye,
-  Plus,
-  RefreshCw,
-  Trash2
+  RefreshCw
 } from 'lucide-react';
 import { useAdminAuth } from '@/context/AdminAuthContext';
 
 export default function EsimsPage() {
   const { user: adminUser } = useAdminAuth();
   const router = useRouter();
-  const [esims, setEsims] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [showRefreshModal, setShowRefreshModal] = useState(false);
-  const [esimToRefresh, setEsimToRefresh] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const [esims, setEsims] = useState<any[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState<number>(1);
+  const [limit, setLimit] = useState<number>(10);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [showRefreshModal, setShowRefreshModal] = useState<boolean>(false);
+  const [esimToRefresh, setEsimToRefresh] = useState<any>(null);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
 
   useEffect(() => {
     fetchEsims();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, limit, searchTerm, statusFilter]);
 
   const fetchEsims = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('authToken');
-      if (!token) return;
+      const token = localStorage.getItem('adminToken');
+      if (!token) throw new Error('No admin token found');
 
       const queryParams = new URLSearchParams({
         page: page.toString(),
         limit: limit.toString()
       });
-
-      if (searchTerm) {
-        queryParams.append('search', searchTerm);
-      }
-
-      if (statusFilter !== 'all') {
-        queryParams.append('status', statusFilter);
-      }
+      if (searchTerm) queryParams.append('search', searchTerm);
+      if (statusFilter !== 'all') queryParams.append('status', statusFilter);
 
       const response = await fetch(`/api/admin/esims?${queryParams.toString()}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
-
       if (!response.ok) {
-        throw new Error('Failed to fetch eSIMs');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch eSIMs');
       }
-
       const data = await response.json();
       setEsims(data.esims);
       setTotal(data.pagination.total);
       setTotalPages(data.pagination.pages);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching eSIMs:', err);
-      setError('Failed to load eSIMs. Please try again later.');
+      setError(err.message || 'Failed to load eSIMs. Please try again later.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSearch = (e) => {
+  const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    setPage(1); // Reset to first page on new search
+    setPage(1);
     fetchEsims();
   };
 
-  const handleViewEsim = (esimId) => {
+  const handleViewEsim = (esimId: number) => {
     router.push(`/admin/esims/${esimId}`);
   };
 
   const handleRefreshEsim = async () => {
     if (!esimToRefresh) return;
-    
     setRefreshing(true);
     try {
-      const token = localStorage.getItem('authToken');
-      if (!token) return;
+      const token = localStorage.getItem('adminToken');
+      if (!token) throw new Error('No admin token found');
 
       const response = await fetch(`/api/admin/esims/${esimToRefresh.id}/refresh`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-
       if (!response.ok) {
-        throw new Error('Failed to refresh eSIM status');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to refresh eSIM status');
       }
-
-      // Close modal and refresh esim list
       setShowRefreshModal(false);
       setEsimToRefresh(null);
       fetchEsims();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error refreshing eSIM:', err);
       setError(err.message || 'Failed to refresh eSIM status');
     } finally {
@@ -116,7 +107,7 @@ export default function EsimsPage() {
     }
   };
 
-  const getStatusBadgeClass = (status) => {
+  const getStatusBadgeClass = (status: string) => {
     switch (status?.toUpperCase()) {
       case 'ACTIVE':
         return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
@@ -145,7 +136,7 @@ export default function EsimsPage() {
       )}
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow mb-6">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row justify-between items-center gap-4">
           <form onSubmit={handleSearch} className="flex-1">
             <div className="relative">
               <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
@@ -160,14 +151,13 @@ export default function EsimsPage() {
               />
             </div>
           </form>
-          
           <div className="flex items-center space-x-3">
             <select
               className="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary focus:border-primary block p-2 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white"
               value={statusFilter}
               onChange={(e) => {
                 setStatusFilter(e.target.value);
-                setPage(1); // Reset to first page on filter change
+                setPage(1);
               }}
             >
               <option value="all">All Statuses</option>
@@ -183,14 +173,14 @@ export default function EsimsPage() {
           <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
             <thead className="text-xs text-gray-700 uppercase bg-gray-50 dark:bg-gray-700 dark:text-gray-400">
               <tr>
-                <th scope="col" className="px-6 py-3">ID</th>
-                <th scope="col" className="px-6 py-3">ICCID</th>
-                <th scope="col" className="px-6 py-3">Order ID</th>
-                <th scope="col" className="px-6 py-3">Bundle</th>
-                <th scope="col" className="px-6 py-3">Status</th>
-                <th scope="col" className="px-6 py-3">Activation Date</th>
-                <th scope="col" className="px-6 py-3">Expiry Date</th>
-                <th scope="col" className="px-6 py-3">Actions</th>
+                <th className="px-6 py-3">ID</th>
+                <th className="px-6 py-3">ICCID</th>
+                <th className="px-6 py-3">Order ID</th>
+                <th className="px-6 py-3">Bundle</th>
+                <th className="px-6 py-3">Status</th>
+                <th className="px-6 py-3">Activation Date</th>
+                <th className="px-6 py-3">Expiry Date</th>
+                <th className="px-6 py-3">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -198,8 +188,8 @@ export default function EsimsPage() {
                 <tr>
                   <td colSpan={8} className="px-6 py-4 text-center">
                     <div className="flex justify-center">
-                      <div className="inline-block h-6 w-6 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]" role="status">
-                        <span className="!absolute !-m-px !h-px !w-px !overflow-hidden !whitespace-nowrap !border-0 !p-0 ![clip:rect(0,0,0,0)]">Loading...</span>
+                      <div className="inline-block h-6 w-6 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent" role="status">
+                        <span className="sr-only">Loading...</span>
                       </div>
                     </div>
                   </td>
@@ -211,18 +201,10 @@ export default function EsimsPage() {
               ) : (
                 esims.map((esim) => (
                   <tr key={esim.id} className="bg-white border-b dark:bg-gray-800 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">
-                    <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">
-                      {esim.id}
-                    </td>
-                    <td className="px-6 py-4">
-                      {esim.iccid || 'N/A'}
-                    </td>
-                    <td className="px-6 py-4">
-                      {esim.orderId || 'N/A'}
-                    </td>
-                    <td className="px-6 py-4">
-                      {esim.bundle?.name || 'N/A'}
-                    </td>
+                    <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">{esim.id}</td>
+                    <td className="px-6 py-4">{esim.iccid || 'N/A'}</td>
+                    <td className="px-6 py-4">{esim.order?.id || 'N/A'}</td>
+                    <td className="px-6 py-4">{esim.order?.bundle?.name || 'N/A'}</td>
                     <td className="px-6 py-4">
                       <span className={`text-xs font-medium px-2.5 py-0.5 rounded ${getStatusBadgeClass(esim.status)}`}>
                         {esim.status}
@@ -260,33 +242,23 @@ export default function EsimsPage() {
           </table>
         </div>
 
-        <div className="p-4 flex flex-col sm:flex-row justify-between items-center border-t border-gray-200 dark:border-gray-700">
-          <div className="text-sm text-gray-700 dark:text-gray-400 mb-4 sm:mb-0">
+        <div className="p-4 flex flex-col sm:flex-row justify-between items-center border-t">
+          <div className="text-sm text-gray-700 mb-4 sm:mb-0">
             Showing <span className="font-medium">{esims.length}</span> of <span className="font-medium">{total}</span> eSIMs
           </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page === 1}
-              className={`p-2 rounded-lg ${
-                page === 1
-                  ? 'text-gray-400 cursor-not-allowed'
-                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
+              className={`p-2 rounded-lg ${page === 1 ? 'text-gray-400 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100'}`}
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
-            <span className="text-sm text-gray-700 dark:text-gray-400">
-              Page {page} of {totalPages}
-            </span>
+            <span className="text-sm text-gray-700">{`Page ${page} of ${totalPages}`}</span>
             <button
               onClick={() => setPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
-              className={`p-2 rounded-lg ${
-                page === totalPages
-                  ? 'text-gray-400 cursor-not-allowed'
-                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
+              className={`p-2 rounded-lg ${page === totalPages ? 'text-gray-400 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100'}`}
             >
               <ChevronRight className="w-5 h-5" />
             </button>
@@ -294,7 +266,6 @@ export default function EsimsPage() {
         </div>
       </div>
 
-      {/* Refresh eSIM Modal */}
       {showRefreshModal && esimToRefresh && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
@@ -303,7 +274,8 @@ export default function EsimsPage() {
             </div>
             <div className="p-4">
               <p className="text-gray-700 dark:text-gray-300">
-                Are you sure you want to refresh the status of eSIM with ICCID <span className="font-medium">{esimToRefresh.iccid || 'N/A'}</span>?
+                Are you sure you want to refresh the status of eSIM with ICCID{' '}
+                <span className="font-medium">{esimToRefresh.iccid || 'N/A'}</span>?
                 This will query the provider API for the latest status information.
               </p>
             </div>

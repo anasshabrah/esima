@@ -1,3 +1,5 @@
+// src/app/admin/esims/[id]/page.tsx
+
 'use client';
 
 import React, { useState, useEffect } from 'react';

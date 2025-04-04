@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
 
     const { name, email, phone: rawPhone, country, password, referralCode } = parsed.data;
 
+    // Normalize email to lowercase before storing
+    const normalizedEmail = email.toLowerCase();
+
     // Process phone number to include country code
     let phone = rawPhone.trim();
     if (!phone.startsWith('+')) {
@@ -47,14 +50,13 @@ export async function POST(request: NextRequest) {
       phone = `${countryCode}${phone}`;
     }
 
-    // Optional: Further normalize the phone number (e.g., remove spaces, dashes)
+    // Optional: Further normalize the phone number (remove spaces, dashes)
     phone = phone.replace(/\s+/g, '').replace(/-/g, '');
 
-    // Check for Existing User
-    const existingUser = await prisma.user.findUnique({ where: { email } });
-    const existingReferralUser = await prisma.referralUser.findUnique({ where: { email } });
+    // For referral users, only check the referralUser table.
+    const existingReferralUser = await prisma.referralUser.findUnique({ where: { email: normalizedEmail } });
 
-    if (existingUser || existingReferralUser) {
+    if (existingReferralUser) {
       return NextResponse.json(
         {
           error: 'Email is already registered. Please log in or use the forgot password option.',
@@ -101,11 +103,11 @@ export async function POST(request: NextRequest) {
     const referralLink = `https://alodata.com/?referral=${code}`;
     const couponCodeGenerated = code;
 
-    // Create Referral User
+    // Create Referral User (store normalizedEmail)
     const newReferralUser = await prisma.referralUser.create({
       data: {
         name,
-        email,
+        email: normalizedEmail,
         phone,
         country: country.toUpperCase(),
         password: hashedPassword,
@@ -122,9 +124,8 @@ export async function POST(request: NextRequest) {
       data: {
         code: couponCodeGenerated,
         discountPercent: referralDiscountPercent,
-        sponsor: newReferralUser.email, // or newReferralUser.id if you prefer
+        sponsor: newReferralUser.email,
         validFrom: new Date(), // Coupon is valid from now
-        // validUntil: new Date(new Date().setFullYear(new Date().getFullYear() + 1)), // Optional: set expiry date
         createdAt: new Date(),
         updatedAt: new Date(),
       },
@@ -146,8 +147,7 @@ export async function POST(request: NextRequest) {
       });
 
       if (referrer) {
-        // Optionally, handle referrer-specific logic here
-        // For example, increment referrer's referral count, etc.
+        // Optionally, handle referrer-specific logic here (e.g., increment referral count)
       } else {
         logger.warn('Invalid referral code provided during signup.', { referralCode });
         return NextResponse.json(
@@ -166,9 +166,7 @@ export async function POST(request: NextRequest) {
         couponCodeGenerated
       );
     } catch (emailError: any) {
-      // Log the error but don't block the signup process
       logger.error('Failed to send referral welcome email.', { error: emailError.message });
-      // Optionally, you can choose to rollback the user creation or notify admins
     }
 
     // Ensure JWT_SECRET is set

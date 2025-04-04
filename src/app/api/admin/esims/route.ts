@@ -1,14 +1,16 @@
+// src/app/api/admin/esims/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
-import { verifyAuth } from '@/utils/adminAuth';
+import { verifyAdminAccess } from '@/utils/adminAuth';
 
 const prisma = new PrismaClient();
 
 export async function GET(request: NextRequest) {
   try {
     // Verify admin authentication
-    const authResult = await verifyAuth(request);
-    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+    const authResult = await verifyAdminAccess(request);
+    if (!authResult.isAuthorized) {
       return NextResponse.json(
         { error: 'Unauthorized access' },
         { status: 401 }
@@ -21,7 +23,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '10');
     const search = searchParams.get('search') || '';
     const status = searchParams.get('status') || '';
-    
+
     // Calculate pagination
     const skip = (page - 1) * limit;
 
@@ -31,8 +33,10 @@ export async function GET(request: NextRequest) {
       whereCondition = {
         OR: [
           { iccid: { contains: search, mode: 'insensitive' } },
-          { order: { orderNumber: { contains: search, mode: 'insensitive' } } },
-          { order: { user: { email: { contains: search, mode: 'insensitive' } } } },
+          { order: { 
+              user: { email: { contains: search, mode: 'insensitive' } }
+            } 
+          }
         ],
       };
     }
@@ -41,39 +45,40 @@ export async function GET(request: NextRequest) {
       whereCondition.status = status;
     }
 
-    // Fetch eSIMs with pagination
+    // Fetch eSIMs with pagination, including related Order and Bundle data via Order.
     const [esims, totalEsims] = await Promise.all([
-      prisma.eSim.findMany({
+      prisma.ESIM.findMany({
         where: whereCondition,
         include: {
           order: {
             select: {
               id: true,
-              orderNumber: true,
+              // Include bundle info from the order (if available)
+              bundle: {
+                select: {
+                  id: true,
+                  name: true,
+                  dataAmount: true,
+                  dataUnit: true,
+                  duration: true,
+                  price: true
+                }
+              },
               user: {
                 select: {
                   id: true,
                   name: true,
-                  email: true,
-                },
-              },
-            },
-          },
-          bundle: {
-            select: {
-              id: true,
-              name: true,
-              dataAmount: true,
-              dataUnit: true,
-              duration: true,
-            },
-          },
+                  email: true
+                }
+              }
+            }
+          }
         },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { id: 'desc' }
       }),
-      prisma.eSim.count({ where: whereCondition }),
+      prisma.ESIM.count({ where: whereCondition })
     ]);
 
     // Calculate total pages
@@ -81,34 +86,24 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       esims,
-      pagination: {
-        total: totalEsims,
-        pages: totalPages,
-        page,
-        limit,
-      },
+      pagination: { total: totalEsims, pages: totalPages, page, limit },
     });
   } catch (error) {
     console.error('Error fetching eSIMs:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch eSIMs' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to fetch eSIMs' }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify admin authentication
-    const authResult = await verifyAuth(request);
-    if (!authResult.isAuthenticated || !authResult.isAdmin) {
+    const authResult = await verifyAdminAccess(request);
+    if (!authResult.isAuthorized) {
       return NextResponse.json(
         { error: 'Unauthorized access' },
         { status: 401 }
       );
     }
 
-    // Parse request body
     const body = await request.json();
     const { 
       iccid, 
@@ -121,7 +116,6 @@ export async function POST(request: NextRequest) {
       notes
     } = body;
 
-    // Validate required fields
     if (!iccid || !bundleId) {
       return NextResponse.json(
         { error: 'ICCID and bundle ID are required' },
@@ -130,10 +124,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if eSIM with this ICCID already exists
-    const existingESim = await prisma.eSim.findFirst({
+    const existingESim = await prisma.ESIM.findFirst({
       where: { iccid },
     });
-
     if (existingESim) {
       return NextResponse.json(
         { error: 'eSIM with this ICCID already exists' },
@@ -143,9 +136,8 @@ export async function POST(request: NextRequest) {
 
     // Check if bundle exists
     const bundle = await prisma.bundle.findUnique({
-      where: { id: bundleId },
+      where: { id: parseInt(bundleId) },
     });
-
     if (!bundle) {
       return NextResponse.json(
         { error: 'Bundle not found' },
@@ -153,12 +145,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if order exists (if provided)
+    // If orderId is provided, verify its existence
     if (orderId) {
       const order = await prisma.order.findUnique({
-        where: { id: orderId },
+        where: { id: parseInt(orderId) },
       });
-
       if (!order) {
         return NextResponse.json(
           { error: 'Order not found' },
@@ -167,8 +158,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create new eSIM
-    const newESim = await prisma.eSim.create({
+    const newESim = await prisma.ESIM.create({
       data: {
         iccid,
         status: status || 'INACTIVE',
@@ -176,39 +166,33 @@ export async function POST(request: NextRequest) {
         expiryDate: expiryDate ? new Date(expiryDate) : null,
         dataUsed: dataUsed ? parseFloat(dataUsed) : 0,
         notes,
-        ...(orderId && { orderId }),
-        bundleId,
+        ...(orderId && { orderId: parseInt(orderId) }),
+        bundleId: parseInt(bundleId)
       },
       include: {
         order: {
           select: {
             id: true,
-            orderNumber: true,
             user: {
               select: {
                 id: true,
                 name: true,
-                email: true,
-              },
-            },
-          },
+                email: true
+              }
+            }
+          }
         },
-        bundle: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        // No direct bundle inclusion; use order.bundle instead.
       },
     });
 
-    // Log the action
-    await prisma.auditLog.create({
+    // Log the action using the AdminAuditLog model
+    await prisma.adminAuditLog.create({
       data: {
-        userId: authResult.user?.id,
+        userId: authResult.admin?.id,
         action: 'CREATE',
-        resourceType: 'ESIM',
-        resourceId: newESim.id,
+        entityType: 'ESIM',
+        entityId: newESim.id.toString(),
         details: `Admin created new eSIM: ${newESim.iccid}`,
         ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
       },
@@ -217,9 +201,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ esim: newESim }, { status: 201 });
   } catch (error) {
     console.error('Error creating eSIM:', error);
-    return NextResponse.json(
-      { error: 'Failed to create eSIM' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to create eSIM' }, { status: 500 });
   }
 }

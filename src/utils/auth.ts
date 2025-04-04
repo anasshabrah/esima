@@ -1,6 +1,6 @@
 // src/utils/auth.ts
 
-import jwt from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 
 interface TokenPayload {
   adminId?: number;
@@ -19,8 +19,8 @@ export function verifyAuthToken(token: string): TokenPayload | null {
       console.error('JWT_SECRET is not defined in environment variables.');
       return null;
     }
-
-    const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload;
+    // Cast JWT_SECRET to string
+    const decoded = jwt.verify(token, JWT_SECRET as string) as TokenPayload;
     return decoded;
   } catch (error) {
     console.error('Error verifying token:', error);
@@ -41,8 +41,9 @@ export function generateAuthToken(payload: TokenPayload, expiresIn: string = '7d
       console.error('JWT_SECRET is not defined in environment variables.');
       return null;
     }
-
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn });
+    // Explicitly cast expiresIn to any so that the options match the overload
+    const options: SignOptions = { expiresIn: expiresIn as any };
+    const token = jwt.sign(payload, JWT_SECRET as string, options);
     return token;
   } catch (error) {
     console.error('Error generating token:', error);

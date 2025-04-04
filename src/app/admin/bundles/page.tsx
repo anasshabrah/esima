@@ -1,11 +1,13 @@
+// src/app/admin/bundles/page.tsx
+
 'use client';
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  Package, 
-  Search, 
-  ChevronLeft, 
+import {
+  Package,
+  Search,
+  ChevronLeft,
   ChevronRight,
   Eye,
   Plus,
@@ -36,14 +38,13 @@ export default function BundlesPage() {
   const fetchBundles = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('authToken');
-      if (!token) return;
+      const token = localStorage.getItem('adminToken'); // Use adminToken here
+      if (!token) throw new Error('No admin token found');
 
       const queryParams = new URLSearchParams({
         page: page.toString(),
         limit: limit.toString()
       });
-
       if (searchTerm) {
         queryParams.append('search', searchTerm);
       }
@@ -55,16 +56,17 @@ export default function BundlesPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch bundles');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch bundles');
       }
 
       const data = await response.json();
       setBundles(data.bundles);
       setTotal(data.pagination.total);
       setTotalPages(data.pagination.pages);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching bundles:', err);
-      setError('Failed to load bundles. Please try again later.');
+      setError(err.message || 'Failed to load bundles. Please try again later.');
     } finally {
       setLoading(false);
     }
@@ -72,7 +74,7 @@ export default function BundlesPage() {
 
   const handleSearch = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setPage(1); // Reset to first page on new search
+    setPage(1);
     fetchBundles();
   };
 
@@ -86,8 +88,8 @@ export default function BundlesPage() {
 
   const handleDeleteBundle = async () => {
     try {
-      const token = localStorage.getItem('authToken');
-      if (!token || !bundleToDelete) return;
+      const token = localStorage.getItem('adminToken'); // Use adminToken
+      if (!token || !bundleToDelete) throw new Error('No admin token found');
 
       const response = await fetch(`/api/admin/bundles/${bundleToDelete.id}`, {
         method: 'DELETE',
@@ -97,10 +99,10 @@ export default function BundlesPage() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete bundle');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete bundle');
       }
 
-      // Close modal and refresh bundle list
       setShowDeleteModal(false);
       setBundleToDelete(null);
       fetchBundles();
@@ -131,7 +133,7 @@ export default function BundlesPage() {
       )}
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow mb-6">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <form onSubmit={handleSearch} className="flex-1">
             <div className="relative">
               <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
@@ -142,11 +144,10 @@ export default function BundlesPage() {
                 className="block w-full p-2 pl-10 text-sm text-gray-900 border border-gray-300 rounded-lg bg-gray-50 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white"
                 placeholder="Search bundles by name"
                 value={searchTerm}
-                onChange={(e: InputChangeEvent) => setSearchTerm(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
               />
             </div>
           </form>
-          
           <button
             onClick={handleAddBundle}
             className="flex items-center px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark focus:ring-4 focus:ring-primary-light"
@@ -175,8 +176,8 @@ export default function BundlesPage() {
                 <tr>
                   <td colSpan={8} className="px-6 py-4 text-center">
                     <div className="flex justify-center">
-                      <div className="inline-block h-6 w-6 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]" role="status">
-                        <span className="!absolute !-m-px !h-px !w-px !overflow-hidden !whitespace-nowrap !border-0 !p-0 ![clip:rect(0,0,0,0)]">Loading...</span>
+                      <div className="inline-block h-6 w-6 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent" role="status">
+                        <span className="sr-only">Loading...</span>
                       </div>
                     </div>
                   </td>
@@ -241,7 +242,7 @@ export default function BundlesPage() {
           </table>
         </div>
 
-        <div className="p-4 flex flex-col sm:flex-row justify-between items-center border-t border-gray-200 dark:border-gray-700">
+        <div className="p-4 flex flex-col sm:flex-row justify-between items-center border-t">
           <div className="text-sm text-gray-700 dark:text-gray-400 mb-4 sm:mb-0">
             Showing <span className="font-medium">{bundles.length}</span> of <span className="font-medium">{total}</span> bundles
           </div>
@@ -249,11 +250,7 @@ export default function BundlesPage() {
             <button
               onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page === 1}
-              className={`p-2 rounded-lg ${
-                page === 1
-                  ? 'text-gray-400 cursor-not-allowed'
-                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
+              className={`p-2 rounded-lg ${page === 1 ? 'text-gray-400 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100'}`}
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -263,11 +260,7 @@ export default function BundlesPage() {
             <button
               onClick={() => setPage(Math.min(totalPages, page + 1))}
               disabled={page === totalPages}
-              className={`p-2 rounded-lg ${
-                page === totalPages
-                  ? 'text-gray-400 cursor-not-allowed'
-                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
+              className={`p-2 rounded-lg ${page === totalPages ? 'text-gray-400 cursor-not-allowed' : 'text-gray-500 hover:bg-gray-100'}`}
             >
               <ChevronRight className="w-5 h-5" />
             </button>
@@ -275,34 +268,32 @@ export default function BundlesPage() {
         </div>
       </div>
 
-      {/* Delete Bundle Modal */}
       {showDeleteModal && bundleToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full">
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+            <div className="p-4 border-b">
               <h3 className="text-lg font-medium text-gray-900 dark:text-white">Delete Bundle</h3>
             </div>
             <div className="p-4">
               <p className="text-gray-700 dark:text-gray-300">
-                Are you sure you want to delete the bundle <span className="font-medium">{bundleToDelete.name}</span>? 
-                This action cannot be undone and may affect existing orders.
+                Are you sure you want to delete the bundle <span className="font-medium">{bundleToDelete.name}</span>? This action cannot be undone and may affect existing orders.
               </p>
             </div>
-            <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end space-x-3">
+            <div className="p-4 border-t flex justify-end space-x-3">
               <button
                 type="button"
                 onClick={() => {
                   setShowDeleteModal(false);
                   setBundleToDelete(null);
                 }}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 focus:ring-4 focus:ring-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleDeleteBundle}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 focus:ring-4 focus:ring-red-300"
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
               >
                 Delete
               </button>

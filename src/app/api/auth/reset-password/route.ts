@@ -54,18 +54,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Hash the new password securely
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update the ReferralUser's password
-    await prisma.referralUser.update({
+    // Update the ReferralUser's password and log the result
+    const updateResult = await prisma.referralUser.update({
       where: { id: passwordReset.referralUserId },
       data: { password: hashedPassword },
     });
+    logger.info('Updated referralUser password successfully.', { updateResult });
 
     // Delete the password reset record to prevent reuse
     await prisma.passwordReset.delete({
       where: { token },
     });
 
-    logger.info('Password reset successfully.', { referralUserId: passwordReset.referralUserId });
+    logger.info('Password reset process completed.', { referralUserId: passwordReset.referralUserId });
 
     return NextResponse.json(
       { message: 'Password has been reset successfully.' },

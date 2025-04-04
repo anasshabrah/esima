@@ -33,7 +33,33 @@ const getUserByToken = async (token: string): Promise<User | null> => {
       include: {
         orders: {
           include: {
-            bundle: true,
+            bundle: {
+              select: {
+                id: true,
+                name: true,
+                friendlyName: true,
+                description: true,
+                dataAmount: true,
+                dataUnit: true,
+                duration: true,
+                price: true,
+                autostart: true,
+                unlimited: true,
+                imageUrl: true,
+                speed: true,
+                groups: true,
+                roamingEnabled: true,
+                countries: {
+                  select: {
+                    id: true,
+                    name: true,
+                    iso: true,
+                    region: true,
+                    networkBrands: true,
+                  },
+                },
+              },
+            },
             country: true,
             esims: true,
           },
@@ -43,6 +69,15 @@ const getUserByToken = async (token: string): Promise<User | null> => {
     });
 
     if (userFromDb) {
+      // Ensure that for each order, the bundle object always has a `countries` property.
+      const orders = userFromDb.orders.map(order => ({
+        ...order,
+        bundle: {
+          ...order.bundle,
+          countries: order.bundle.countries ?? []
+        }
+      }));
+
       const user: User = {
         id: userFromDb.id,
         email: userFromDb.email ?? null,
@@ -53,7 +88,7 @@ const getUserByToken = async (token: string): Promise<User | null> => {
         currencySymbol: userFromDb.currencySymbol,
         exchangeRate: userFromDb.exchangeRate,
         language: userFromDb.language as Language,
-        orders: userFromDb.orders as Order[] | undefined,
+        orders: orders as Order[] | undefined,
         otp: userFromDb.otp ?? undefined,
       };
 

@@ -7,18 +7,12 @@ import { useTranslations } from '@/context/TranslationsContext';
 import { useRouter } from 'next/navigation';
 import { ClipLoader } from 'react-spinners';
 import classNames from 'classnames';
+import Link from 'next/link';
 
 const ResetPasswordForm: React.FC = () => {
   const { t } = useTranslations();
   const router = useRouter();
-  const [token, setToken] = useState<string>('');
-
-  useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const tokenParam = searchParams.get('token') || '';
-    setToken(tokenParam);
-  }, []);
-
+  const [token, setToken] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     newPassword: '',
     confirmPassword: '',
@@ -27,7 +21,30 @@ const ResetPasswordForm: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [success, setSuccess] = useState<boolean>(false);
 
-  // Validation function
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const tokenParam = searchParams.get('token');
+    setToken(tokenParam);
+  }, []);
+
+  // While token is still null (loading), show a loader.
+  if (token === null) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <ClipLoader size={30} />
+      </div>
+    );
+  }
+
+  // If token is missing (empty string), show error.
+  if (!token) {
+    return (
+      <div className="text-center text-red-500">
+        {t('Invalid or missing token.')}
+      </div>
+    );
+  }
+
   const validate = (): boolean => {
     const newErrors: Partial<Record<string, string>> = {};
     let isValid = true;
@@ -52,10 +69,8 @@ const ResetPasswordForm: React.FC = () => {
     return isValid;
   };
 
-  // Handle input changes
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-
     setFormData((prev) => ({ ...prev, [name]: value }));
     setErrors((prev) => ({ ...prev, [name]: undefined, general: undefined }));
   };
@@ -80,7 +95,15 @@ const ResetPasswordForm: React.FC = () => {
       const result = await response.json();
 
       if (!response.ok) {
-        setErrors({ general: result.error || t('An error occurred.') });
+        // If the error indicates an invalid or expired token, we want to show a login option.
+        if (
+          result.error === 'Invalid or expired password reset token.' ||
+          result.error === 'Password reset token has expired.'
+        ) {
+          setErrors({ general: result.error });
+        } else {
+          setErrors({ general: result.error || t('An error occurred.') });
+        }
         setLoading(false);
         return;
       }
@@ -98,10 +121,16 @@ const ResetPasswordForm: React.FC = () => {
     }
   };
 
-  if (!token) {
+  // If there is a token error, show a message with a link to sign in.
+  if (errors.general === 'Invalid or expired password reset token.' || errors.general === 'Password reset token has expired.') {
     return (
-      <div className="text-center text-red-500">
-        {t('Invalid or missing token.')}
+      <div className="text-center">
+        <p className="text-sm text-red-600">{t(errors.general)}</p>
+        <p className="mt-4">
+          <Link href="/signin" className="text-primary underline">
+            {t('Go to Sign In')}
+          </Link>
+        </p>
       </div>
     );
   }
@@ -109,18 +138,13 @@ const ResetPasswordForm: React.FC = () => {
   return (
     <div>
       {success ? (
-        // Success Message
         <div className="bg-green-100 text-green-800 p-4 rounded-md text-center mb-6">
           <p>
-            {t(
-              'Password reset successful. You will be redirected to sign in shortly.'
-            )}
+            {t('Password reset successful. You will be redirected to sign in shortly.')}
           </p>
         </div>
       ) : (
-        // Reset Password Form
         <form onSubmit={handleSubmit} className="space-y-6" noValidate>
-          {/* New Password Field */}
           <div>
             <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700">
               {t('New Password')}
@@ -151,7 +175,6 @@ const ResetPasswordForm: React.FC = () => {
             )}
           </div>
 
-          {/* Confirm Password Field */}
           <div>
             <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">
               {t('Confirm Password')}
@@ -182,14 +205,12 @@ const ResetPasswordForm: React.FC = () => {
             )}
           </div>
 
-          {/* General Error Message */}
           {errors.general && (
             <div className="text-center">
               <p className="text-sm text-red-600">{errors.general}</p>
             </div>
           )}
 
-          {/* Submit Button */}
           <div>
             <button
               type="submit"

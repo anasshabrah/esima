@@ -84,8 +84,8 @@ export async function GET(request: NextRequest) {
       return sum + order.amount; // Assuming amount is in USD if exchangeRate is not available or invalid
     }, 0);
 
-    // 6. Calculate Total Profit (e.g., 20% of total sales)
-    const totalProfit = parseFloat((totalSales * 0.2).toFixed(2));
+    // 6. Calculate Total Profit (now 10% of total sales)
+    const totalProfit = parseFloat((totalSales * 0.1).toFixed(2));
 
     // 7. Log successful data fetch
     logger.info('Referral dashboard data fetched successfully.', { referralUserId: referralUser.id });
@@ -101,7 +101,6 @@ export async function GET(request: NextRequest) {
     // 9. Return the ReferralData as JSON
     return NextResponse.json(referralData, { status: 200 });
   } catch (error: any) {
-    // 10. Handle unexpected errors
     logger.error('Fetch referral dashboard error:', { error: error.message });
     return NextResponse.json({ error: 'Internal server error.' }, { status: 500 });
   }

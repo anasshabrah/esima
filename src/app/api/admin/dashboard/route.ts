@@ -1,82 +1,32 @@
-'use client';
+// src/app/api/admin/dashboard/route.ts
 
-import React, { useState, useEffect } from 'react';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { verifyAuthToken } from '@/utils/auth';
+import { verifyAdminAccess } from '@/utils/adminAuth';
 
-// Helper function to verify admin access
-async function verifyAdminAccess(request) {
-  // Get the authorization header
-  const authHeader = request.headers.get('authorization');
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return { isAuthorized: false, error: 'Unauthorized: No token provided' };
-  }
-  
-  const token = authHeader.split(' ')[1];
-  
-  try {
-    // Verify the token and get the user
-    const payload = verifyAuthToken(token);
-    
-    if (!payload || !payload.userId) {
-      return { isAuthorized: false, error: 'Unauthorized: Invalid token' };
-    }
-    
-    // Get the user from the database
-    const user = await prisma.user.findUnique({
-      where: { id: parseInt(payload.userId) }
-    });
-    
-    if (!user) {
-      return { isAuthorized: false, error: 'Unauthorized: User not found' };
-    }
-    
-    // Check if the user is an admin
-    if (!user.isAdmin) {
-      return { isAuthorized: false, error: 'Forbidden: Admin access required' };
-    }
-    
-    return { isAuthorized: true, user };
-  } catch (error) {
-    console.error('Error verifying admin access:', error);
-    return { isAuthorized: false, error: 'Unauthorized: Invalid token' };
-  }
-}
-
-// GET handler for dashboard data
-export async function GET(request) {
-  const { isAuthorized, user, error } = await verifyAdminAccess(request);
-  
+export async function GET(request: NextRequest) {
+  // Use the centralized admin verification function.
+  const { isAuthorized, admin, error } = await verifyAdminAccess(request);
   if (!isAuthorized) {
     return NextResponse.json({ error }, { status: 401 });
   }
   
   try {
-    // Get current date
+    // Determine the start dates for the current and previous months.
     const now = new Date();
     const currentMonth = now.getMonth();
     const previousMonth = (currentMonth - 1 + 12) % 12;
     const currentYear = now.getFullYear();
     const previousYear = currentMonth === 0 ? currentYear - 1 : currentYear;
     
-    // Start of current and previous months
     const startOfCurrentMonth = new Date(currentYear, currentMonth, 1);
     const startOfPreviousMonth = new Date(previousYear, previousMonth, 1);
     
-    // Get total users
+    // Total users and month-over-month user growth.
     const totalUsers = await prisma.user.count();
-    
-    // Get users created in current and previous months
     const usersCurrentMonth = await prisma.user.count({
-      where: {
-        createdAt: {
-          gte: startOfCurrentMonth
-        }
-      }
+      where: { createdAt: { gte: startOfCurrentMonth } }
     });
-    
     const usersPreviousMonth = await prisma.user.count({
       where: {
         createdAt: {
@@ -85,24 +35,15 @@ export async function GET(request) {
         }
       }
     });
-    
-    // Calculate user growth percentage
-    const usersChange = usersPreviousMonth > 0 
-      ? Math.round(((usersCurrentMonth - usersPreviousMonth) / usersPreviousMonth) * 100) 
+    const usersChange = usersPreviousMonth > 0
+      ? Math.round(((usersCurrentMonth - usersPreviousMonth) / usersPreviousMonth) * 100)
       : 0;
     
-    // Get total orders
+    // Total orders and month-over-month order growth.
     const totalOrders = await prisma.order.count();
-    
-    // Get orders created in current and previous months
     const ordersCurrentMonth = await prisma.order.count({
-      where: {
-        createdAt: {
-          gte: startOfCurrentMonth
-        }
-      }
+      where: { createdAt: { gte: startOfCurrentMonth } }
     });
-    
     const ordersPreviousMonth = await prisma.order.count({
       where: {
         createdAt: {
@@ -111,33 +52,20 @@ export async function GET(request) {
         }
       }
     });
-    
-    // Calculate order growth percentage
-    const ordersChange = ordersPreviousMonth > 0 
-      ? Math.round(((ordersCurrentMonth - ordersPreviousMonth) / ordersPreviousMonth) * 100) 
+    const ordersChange = ordersPreviousMonth > 0
+      ? Math.round(((ordersCurrentMonth - ordersPreviousMonth) / ordersPreviousMonth) * 100)
       : 0;
     
-    // Get total revenue
+    // Total revenue and revenue growth percentage.
     const totalRevenueResult = await prisma.order.aggregate({
-      _sum: {
-        amount: true
-      }
+      _sum: { amount: true }
     });
-    
     const totalRevenue = totalRevenueResult._sum.amount || 0;
     
-    // Get revenue for current and previous months
     const revenueCurrentMonth = await prisma.order.aggregate({
-      where: {
-        createdAt: {
-          gte: startOfCurrentMonth
-        }
-      },
-      _sum: {
-        amount: true
-      }
+      where: { createdAt: { gte: startOfCurrentMonth } },
+      _sum: { amount: true }
     });
-    
     const revenuePreviousMonth = await prisma.order.aggregate({
       where: {
         createdAt: {
@@ -145,42 +73,32 @@ export async function GET(request) {
           lt: startOfCurrentMonth
         }
       },
-      _sum: {
-        amount: true
-      }
+      _sum: { amount: true }
     });
-    
-    // Calculate revenue growth percentage
     const currentMonthRevenue = revenueCurrentMonth._sum.amount || 0;
     const previousMonthRevenue = revenuePreviousMonth._sum.amount || 0;
-    
-    const revenueChange = previousMonthRevenue > 0 
-      ? Math.round(((currentMonthRevenue - previousMonthRevenue) / previousMonthRevenue) * 100) 
+    const revenueChange = previousMonthRevenue > 0
+      ? Math.round(((currentMonthRevenue - previousMonthRevenue) / previousMonthRevenue) * 100)
       : 0;
     
-    // Get active eSIMs count
-    const activeEsims = await prisma.esim.count({
-      where: {
-        status: 'ACTIVE'
-      }
+    // Active eSIMs and pending withdrawals.
+    // *** IMPORTANT: Use prisma.eSIM (with capital "SIM") as generated by Prisma. ***
+    const activeEsims = await prisma.eSIM.count({
+      where: { status: 'ACTIVE' }
     });
-    
-    // Get pending withdrawals count
     const pendingWithdrawals = await prisma.withdrawal.count({
-      where: {
-        status: 'PENDING'
-      }
+      where: { status: 'PENDING' }
     });
     
-    // Log the action
+    // Log the dashboard view action.
     await prisma.adminAuditLog.create({
       data: {
-        userId: user.id,
+        userId: admin.id,
         action: 'view',
         entityType: 'dashboard',
         details: JSON.stringify({ timestamp: new Date() }),
-        ipAddress: request.headers.get('x-forwarded-for') || request.ip,
-        userAgent: request.headers.get('user-agent'),
+        ipAddress: request.headers.get('x-forwarded-for') || '',
+        userAgent: request.headers.get('user-agent') || '',
       },
     });
     

@@ -32,7 +32,12 @@ const getUserByToken = async (token: string): Promise<User | null> => {
       include: {
         orders: {
           include: {
-            bundle: true,
+            // Include bundle with its nested countries relation
+            bundle: {
+              include: {
+                countries: true,
+              },
+            },
             country: true,
             esims: true,
           },
@@ -71,7 +76,6 @@ const getUserByToken = async (token: string): Promise<User | null> => {
  */
 export default async function CustomerPage({ params }: { params: any }) {
   const { token } = await params;
-
   const language: Language = defaultLanguage.code;
 
   if (!token) {

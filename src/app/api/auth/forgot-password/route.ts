@@ -26,58 +26,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const { email } = parsed.data;
+    // Normalize email to lowercase for a case-insensitive lookup
+    const normalizedEmail = parsed.data.email.toLowerCase();
 
-    // First try to find user in the User table
-    let user = await prisma.user.findUnique({ where: { email } });
-    let isReferralUser = false;
-    let userId = null;
+    // First try to find the referral user in the referralUser table
+    let user = await prisma.referralUser.findUnique({ where: { email: normalizedEmail } });
+    let isReferralUser = !!user;
+    let userId = user ? user.id : null;
 
-    // If not found in User table, try the referralUser table
+    // If not found in referralUser table, then check the regular User table
     if (!user) {
-      const referralUser = await prisma.referralUser.findUnique({ where: { email } });
-      if (referralUser) {
-        user = referralUser;
-        isReferralUser = true;
-        userId = referralUser.id;
-      }
-    } else {
-      userId = user.id;
-    }
-
-    if (!user) {
-      // To prevent email enumeration, respond with success even if user doesn't exist
-      logger.warn('Forgot password requested for non-existent email.', { email });
-      return NextResponse.json(
-        { message: 'If that email is registered, you will receive a password reset link.' },
-        { status: 200 }
-      );
-    }
-
-    // Generate a secure token
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
-
-    // Create or update password reset token based on user type
-    if (isReferralUser) {
-      await prisma.passwordReset.upsert({
-        where: { referralUserId: userId },
-        update: { token, expiresAt },
-        create: { referralUserId: userId, token, expiresAt },
-      });
-    } else {
-      // For regular users, we need to handle differently
-      // Check if the schema supports userId in passwordReset table
-      try {
-        await prisma.passwordReset.upsert({
-          where: { userId: userId },
-          update: { token, expiresAt },
-          create: { userId: userId, token, expiresAt },
-        });
-      } catch (error) {
-        // If the schema doesn't support userId, log the error
-        logger.error('Error creating password reset token for regular user', { error, userId });
-        // Still return success to prevent email enumeration
+      user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+      // If the email exists only in User table, then we don't support password reset (per schema)
+      if (user) {
+        logger.error('Password reset token creation for regular users is not supported by the schema.', { userId: user.id });
         return NextResponse.json(
           { message: 'If that email is registered, you will receive a password reset link.' },
           { status: 200 }
@@ -85,13 +47,43 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // Create password reset link
+    if (!user) {
+      logger.warn('Forgot password requested for non-existent email.', { email: normalizedEmail });
+      // Always return success to prevent email enumeration
+      return NextResponse.json(
+        { message: 'If that email is registered, you will receive a password reset link.' },
+        { status: 200 }
+      );
+    }
+
+    // Generate a secure token and set expiration (1 hour from now)
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+    // For referral users, create or update the password reset token
+    if (isReferralUser && userId) {
+      const upsertResult = await prisma.passwordReset.upsert({
+        where: { referralUserId: userId },
+        update: { token, expiresAt },
+        create: { referralUserId: userId, token, expiresAt },
+      });
+      logger.info('Password reset token upsert successful.', { upsertResult });
+    } else {
+      // This branch shouldn't be reached because regular users are handled above
+      logger.error('Unexpected branch: regular user found in forgot-password after referral lookup.', { userId });
+      return NextResponse.json(
+        { message: 'If that email is registered, you will receive a password reset link.' },
+        { status: 200 }
+      );
+    }
+
+    // Build the password reset link
     const resetLink = `${process.env.NEXT_PUBLIC_BASE_URL}/reset-password?token=${token}`;
 
-    // Send password reset email
+    // Prepare the email content
     const emailContent = `
       <h1>Password Reset Request</h1>
-      <p>Hello ${user.name},</p>
+      <p>Hello ${user.name || 'User'},</p>
       <p>You requested a password reset. Click the link below to reset your password:</p>
       <p><a href="${resetLink}">Reset Password</a></p>
       <p>This link will expire in 1 hour.</p>
@@ -99,13 +91,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       <p>Best regards,<br/>Your Company Team</p>
     `;
 
+    // Log the email content for debugging purposes
+    logger.info('Prepared password reset email content.', { to: normalizedEmail, resetLink });
+
+    // Send the password reset email
     await sendEmail({
-      to: email,
+      to: normalizedEmail,
       subject: 'Password Reset Request',
       html: emailContent,
     });
 
-    logger.info('Password reset email sent.', { userId, email });
+    logger.info('Password reset email sent successfully.', { userId, email: normalizedEmail });
 
     return NextResponse.json(
       { message: 'If that email is registered, you will receive a password reset link.' },
